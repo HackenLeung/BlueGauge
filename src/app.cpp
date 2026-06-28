@@ -35,6 +35,8 @@ constexpr UINT_PTR kConnectionToastTimer = 3003;
 constexpr UINT_PTR kBluetoothChangeDebounceTimer = 3004;
 constexpr UINT kConnectionToastDurationMs = 2800;
 constexpr UINT kBluetoothChangeDebounceMs = 1500;
+constexpr DWORD kTaskbarDisplayGraceMs = 30000;
+constexpr int kTaskbarEmptyHideScans = 3;
 
 bool TryReadInt(HWND hwnd, int id, int& value) {
     wchar_t text[32]{};
@@ -690,7 +692,7 @@ bool App::CreateBatteryWindow() {
 }
 
 void App::SyncBatteryWindow() {
-    if (TaskbarDevices(devices_, configStore_.Get()).empty()) {
+    if (TaskbarDisplayDevices().empty()) {
         if (statusWindow_) {
             DestroyWindow(statusWindow_);
             statusWindow_ = nullptr;
@@ -732,8 +734,54 @@ void App::RefreshFromBluetoothChange() {
     }
 }
 
+void App::UpdateTaskbarDisplayCache() {
+    const auto visibleDevices = TaskbarDevices(devices_, configStore_.Get());
+    if (!visibleDevices.empty()) {
+        taskbarDisplayCache_ = visibleDevices;
+        taskbarDisplayCacheTick_ = GetTickCount();
+        taskbarEmptyScanCount_ = 0;
+        return;
+    }
+
+    if (taskbarDisplayCache_.empty()) {
+        return;
+    }
+
+    ++taskbarEmptyScanCount_;
+    const DWORD now = GetTickCount();
+    if (taskbarDisplayCacheTick_ == 0
+        || now - taskbarDisplayCacheTick_ > kTaskbarDisplayGraceMs
+        || taskbarEmptyScanCount_ >= kTaskbarEmptyHideScans) {
+        Logger::Instance().Info(L"任务栏电量显示隐藏：连续未读取到可显示设备");
+        taskbarDisplayCache_.clear();
+        taskbarDisplayCacheTick_ = 0;
+        taskbarEmptyScanCount_ = 0;
+        return;
+    }
+
+    Logger::Instance().Info(L"任务栏电量显示保留上次结果，等待下一轮扫描确认");
+}
+
+std::vector<BluetoothDeviceInfo> App::TaskbarDisplayDevices() const {
+    const auto visibleDevices = TaskbarDevices(devices_, configStore_.Get());
+    if (!visibleDevices.empty()) {
+        return visibleDevices;
+    }
+    if (taskbarDisplayCache_.empty() || taskbarDisplayCacheTick_ == 0) {
+        return {};
+    }
+    const DWORD now = GetTickCount();
+    if (now - taskbarDisplayCacheTick_ > kTaskbarDisplayGraceMs) {
+        return {};
+    }
+    return taskbarDisplayCache_;
+}
+
 void App::ClearDeviceCache() {
     devices_.clear();
+    taskbarDisplayCache_.clear();
+    taskbarDisplayCacheTick_ = 0;
+    taskbarEmptyScanCount_ = 0;
     lowBatteryNotified_.clear();
     hasScanBaseline_ = false;
     previousConnectionStates_.clear();
@@ -779,6 +827,7 @@ void App::ApplyScanResult(std::vector<BluetoothDeviceInfo>* result) {
     lastScanBatteryCount_ = static_cast<int>(std::count_if(devices_.begin(), devices_.end(), [](const BluetoothDeviceInfo& device) {
         return device.batteryPercent.has_value();
     }));
+    UpdateTaskbarDisplayCache();
     UpdateTray();
     SyncBatteryWindow();
     CheckLowBattery();
@@ -826,7 +875,7 @@ void App::PositionStatusWindow() {
     if (!taskbarWindow_) {
         return;
     }
-    const auto visibleDevices = TaskbarDevices(devices_, configStore_.Get());
+    const auto visibleDevices = TaskbarDisplayDevices();
     const int style = std::clamp(configStore_.Get().taskbarBatteryStyle, 0, kTaskbarBatteryStyleCount - 1);
     const int count = std::min(configStore_.Get().taskbarMaxDevices, static_cast<int>(visibleDevices.size()));
     if (count <= 0) {
@@ -931,7 +980,7 @@ void App::PaintStatusWindow(HWND hwnd) {
     DeleteObject(transparentBrush);
 
     HFONT textFont = CreateUiFont(9);
-    auto visibleDevices = TaskbarDevices(devices_, configStore_.Get());
+    auto visibleDevices = TaskbarDisplayDevices();
     const int style = std::clamp(configStore_.Get().taskbarBatteryStyle, 0, kTaskbarBatteryStyleCount - 1);
     const int threshold = configStore_.Get().lowBatteryThreshold;
 

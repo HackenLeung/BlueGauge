@@ -108,15 +108,10 @@ void TrayIcon::ShowMenu(HWND hwnd, const std::vector<BluetoothDeviceInfo>& devic
 }
 
 HICON TrayIcon::LoadStateIcon(TrayIconState state) const {
-    int id = IDI_DISCONNECTED;
-    if (state == TrayNormal) {
-        id = IDI_APP;
-    } else if (state == TrayWarning) {
-        id = IDI_APP_WARNING;
-    }
+    (void)state;
     const UINT dpi = hwnd_ ? GetDpiForWindow(hwnd_) : USER_DEFAULT_SCREEN_DPI;
     const int iconSize = GetSystemMetricsForDpi(SM_CXSMICON, dpi);
-    return reinterpret_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(id), IMAGE_ICON, iconSize, iconSize, LR_DEFAULTCOLOR | LR_SHARED));
+    return reinterpret_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, iconSize, iconSize, LR_DEFAULTCOLOR | LR_SHARED));
 }
 
 std::wstring TrayIcon::BuildTooltip(const std::vector<BluetoothDeviceInfo>& devices) const {

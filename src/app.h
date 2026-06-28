@@ -36,6 +36,8 @@ private:
     bool RefreshAsync();
     void ScheduleBluetoothChangeRefresh(const std::wstring& source);
     void RefreshFromBluetoothChange();
+    void UpdateTaskbarDisplayCache();
+    std::vector<BluetoothDeviceInfo> TaskbarDisplayDevices() const;
     void ClearDeviceCache();
     void ApplyScanResult(std::vector<BluetoothDeviceInfo>* result);
     void UpdateTray();
@@ -113,5 +115,8 @@ private:
     ScannerService scannerService_;
     UpdateService updateService_;
     std::vector<BluetoothDeviceInfo> devices_;
+    std::vector<BluetoothDeviceInfo> taskbarDisplayCache_;
+    DWORD taskbarDisplayCacheTick_ = 0;
+    int taskbarEmptyScanCount_ = 0;
     std::set<std::wstring> lowBatteryNotified_;
 };
