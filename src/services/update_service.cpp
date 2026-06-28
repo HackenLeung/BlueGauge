@@ -11,6 +11,17 @@
 #include <vector>
 
 namespace {
+constexpr wchar_t kGitHubHost[] = L"github.com";
+constexpr wchar_t kGitHubApiHost[] = L"api.github.com";
+constexpr wchar_t kLatestReleasePath[] = L"/HackenLeung/BlueGauge/releases/latest";
+constexpr wchar_t kLatestReleaseApiPath[] = L"/repos/HackenLeung/BlueGauge/releases/latest";
+constexpr wchar_t kReleaseTagMarker[] = L"/releases/tag/";
+
+struct ReleaseInfo {
+    std::wstring version;
+    std::wstring htmlUrl;
+};
+
 std::wstring FromUtf8(const std::string& text) {
     if (text.empty()) {
         return {};
@@ -92,62 +103,25 @@ bool IsVersionGreater(const std::wstring& latest, const std::wstring& current) {
     return false;
 }
 
-UpdateResult FetchLatestRelease() {
-    UpdateResult result{};
-    HINTERNET session = WinHttpOpen(L"BlueGauge/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) {
-        result.message = L"无法初始化网络请求。";
-        return result;
-    }
-    HINTERNET connect = WinHttpConnect(session, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!connect) {
-        WinHttpCloseHandle(session);
-        result.message = L"无法连接 GitHub。";
-        return result;
-    }
-    HINTERNET request = WinHttpOpenRequest(connect, L"GET", L"/repos/HackenLeung/BlueGauge/releases/latest",
-        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-    if (!request) {
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        result.message = L"无法创建更新请求。";
-        return result;
-    }
-    WinHttpAddRequestHeaders(request, L"User-Agent: BlueGauge\r\nAccept: application/vnd.github+json\r\n",
-        static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD);
-
-    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
-        || !WinHttpReceiveResponse(request, nullptr)) {
-        result.message = L"检查更新失败，请稍后重试。";
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        return result;
+std::wstring QueryHeaderString(HINTERNET request, DWORD infoLevel) {
+    DWORD size = 0;
+    if (WinHttpQueryHeaders(request, infoLevel, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &size,
+        WINHTTP_NO_HEADER_INDEX) || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        return {};
     }
 
-    DWORD statusCode = 0;
-    DWORD statusSize = sizeof(statusCode);
-    WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);
-    if (statusCode == 404) {
-        result.status = UpdateNoRelease;
-        result.htmlUrl = kProjectUrl;
-        result.message = L"当前仓库还没有 GitHub Releases。";
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        return result;
+    std::wstring value(size / sizeof(wchar_t), L'\0');
+    if (!WinHttpQueryHeaders(request, infoLevel, WINHTTP_HEADER_NAME_BY_INDEX, value.data(), &size,
+        WINHTTP_NO_HEADER_INDEX)) {
+        return {};
     }
-    if (statusCode != 200) {
-        result.status = UpdateFailed;
-        result.message = L"GitHub 返回状态码 " + std::to_wstring(statusCode) + L"。";
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        return result;
+    while (!value.empty() && value.back() == L'\0') {
+        value.pop_back();
     }
+    return value;
+}
 
+std::string ReadResponseBody(HINTERNET request) {
     std::string body;
     DWORD available = 0;
     while (WinHttpQueryDataAvailable(request, &available) && available > 0) {
@@ -159,6 +133,157 @@ UpdateResult FetchLatestRelease() {
         chunk.resize(read);
         body += chunk;
     }
+    return body;
+}
+
+std::optional<std::wstring> ExtractTagFromReleaseUrl(std::wstring url) {
+    const size_t marker = url.find(kReleaseTagMarker);
+    if (marker == std::wstring::npos) {
+        return std::nullopt;
+    }
+
+    const size_t start = marker + wcslen(kReleaseTagMarker);
+    const size_t end = url.find_first_of(L"?#", start);
+    std::wstring tag = url.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
+    if (tag.empty()) {
+        return std::nullopt;
+    }
+    return tag;
+}
+
+std::optional<ReleaseInfo> FetchLatestReleaseRedirect(std::wstring& errorMessage, bool& noRelease) {
+    HINTERNET session = WinHttpOpen(L"BlueGauge/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+        errorMessage = L"无法初始化网络请求。";
+        return std::nullopt;
+    }
+    HINTERNET connect = WinHttpConnect(session, kGitHubHost, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        errorMessage = L"无法连接 GitHub。";
+        return std::nullopt;
+    }
+    HINTERNET request = WinHttpOpenRequest(connect, L"GET", kLatestReleasePath,
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+    if (!request) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        errorMessage = L"无法创建更新请求。";
+        return std::nullopt;
+    }
+
+    DWORD disableRedirects = WINHTTP_DISABLE_REDIRECTS;
+    WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disableRedirects, sizeof(disableRedirects));
+    WinHttpAddRequestHeaders(request, L"User-Agent: BlueGauge\r\nAccept: text/html,*/*\r\n",
+        static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD);
+
+    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+        || !WinHttpReceiveResponse(request, nullptr)) {
+        errorMessage = L"检查更新失败，请稍后重试。";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusSize = sizeof(statusCode);
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);
+
+    if (statusCode == 404) {
+        noRelease = true;
+        errorMessage = L"当前仓库还没有 GitHub Releases。";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+
+    if (statusCode < 300 || statusCode >= 400) {
+        errorMessage = L"GitHub 返回状态码 " + std::to_wstring(statusCode) + L"。";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+
+    std::wstring location = QueryHeaderString(request, WINHTTP_QUERY_LOCATION);
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+
+    if (location.empty()) {
+        errorMessage = L"无法解析 GitHub Release 跳转信息。";
+        return std::nullopt;
+    }
+    if (location[0] == L'/') {
+        location = std::wstring(L"https://github.com") + location;
+    }
+
+    const auto tag = ExtractTagFromReleaseUrl(location);
+    if (!tag.has_value()) {
+        errorMessage = L"无法解析 GitHub Release 版本。";
+        return std::nullopt;
+    }
+    return ReleaseInfo{ *tag, location };
+}
+
+std::optional<ReleaseInfo> FetchLatestReleaseApi(std::wstring& errorMessage, bool& noRelease) {
+    HINTERNET session = WinHttpOpen(L"BlueGauge/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+        errorMessage = L"无法初始化网络请求。";
+        return std::nullopt;
+    }
+    HINTERNET connect = WinHttpConnect(session, kGitHubApiHost, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        errorMessage = L"无法连接 GitHub。";
+        return std::nullopt;
+    }
+    HINTERNET request = WinHttpOpenRequest(connect, L"GET", kLatestReleaseApiPath,
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+    if (!request) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        errorMessage = L"无法创建更新请求。";
+        return std::nullopt;
+    }
+    WinHttpAddRequestHeaders(request, L"User-Agent: BlueGauge\r\nAccept: application/vnd.github+json\r\n",
+        static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD);
+
+    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+        || !WinHttpReceiveResponse(request, nullptr)) {
+        errorMessage = L"检查更新失败，请稍后重试。";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusSize = sizeof(statusCode);
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);
+    if (statusCode == 404) {
+        noRelease = true;
+        errorMessage = L"当前仓库还没有 GitHub Releases。";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+    if (statusCode != 200) {
+        errorMessage = L"GitHub API 返回状态码 " + std::to_wstring(statusCode) + L"。";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+
+    const std::string body = ReadResponseBody(request);
     WinHttpCloseHandle(request);
     WinHttpCloseHandle(connect);
     WinHttpCloseHandle(session);
@@ -166,18 +291,46 @@ UpdateResult FetchLatestRelease() {
     const auto tag = FindJsonString(body, "tag_name");
     const auto url = FindJsonString(body, "html_url");
     if (!tag.has_value()) {
-        result.status = UpdateFailed;
-        result.message = L"无法解析 GitHub Release 信息。";
-        return result;
+        errorMessage = L"无法解析 GitHub Release 信息。";
+        return std::nullopt;
     }
-    result.latestVersion = FromUtf8(*tag);
-    result.htmlUrl = url.has_value() ? FromUtf8(*url) : kProjectUrl;
+    return ReleaseInfo{ FromUtf8(*tag), url.has_value() ? FromUtf8(*url) : kProjectUrl };
+}
+
+UpdateResult BuildUpdateResult(const ReleaseInfo& release) {
+    UpdateResult result{};
+    result.latestVersion = release.version;
+    result.htmlUrl = release.htmlUrl.empty() ? kProjectUrl : release.htmlUrl;
     if (IsVersionGreater(result.latestVersion, kAppVersion)) {
         result.status = UpdateAvailable;
         result.message = L"发现新版本 " + result.latestVersion + L"。";
     } else {
         result.status = UpdateLatest;
         result.message = L"已是最新版本。";
+    }
+    return result;
+}
+
+UpdateResult FetchLatestRelease() {
+    std::wstring errorMessage;
+    bool noRelease = false;
+    if (const auto release = FetchLatestReleaseRedirect(errorMessage, noRelease)) {
+        return BuildUpdateResult(*release);
+    }
+    if (!noRelease) {
+        if (const auto release = FetchLatestReleaseApi(errorMessage, noRelease)) {
+            return BuildUpdateResult(*release);
+        }
+    }
+
+    UpdateResult result{};
+    if (noRelease) {
+        result.status = UpdateNoRelease;
+        result.htmlUrl = kProjectUrl;
+        result.message = L"当前仓库还没有 GitHub Releases。";
+    } else {
+        result.status = UpdateFailed;
+        result.message = errorMessage.empty() ? L"检查更新失败，请稍后重试。" : errorMessage;
     }
     return result;
 }
