@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlueGauge 任务栏电量 UI 方案</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111827;
+      --panel: #1f2937;
+      --panel-soft: #243244;
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --green: #22c55e;
+      --yellow: #facc15;
+      --red: #ef4444;
+      --blue: #38bdf8;
+      --taskbar: rgba(17, 24, 39, 0.82);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 18%, rgba(56, 189, 248, 0.18), transparent 28rem),
+        linear-gradient(135deg, #111827 0%, #0f172a 48%, #172033 100%);
+    }
+
+    main {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 64px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 44px);
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .intro {
+      max-width: 720px;
+      margin: 14px 0 28px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .wide {
+      grid-column: span 2;
+    }
+
+    .card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(31, 41, 55, 0.78);
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.26);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    .card p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .preview {
+      padding: 18px 16px 16px;
+    }
+
+    .taskbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      height: 46px;
+      padding: 0 14px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      background: var(--taskbar);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .tray {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .named-tray {
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .device-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 154px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.07);
+      color: #e5e7eb;
+      font-size: 12px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .device-chip strong,
+    .device-line strong,
+    .ticker span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
+    .device-chip .percent {
+      color: var(--level-color, var(--green));
+      font-weight: 700;
+    }
+
+    .time {
+      color: #e2e8f0;
+      font-size: 12px;
+      line-height: 1.1;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .samples {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .sample {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 74px;
+      padding: 8px;
+      border-radius: 8px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .icon {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      color: var(--level-color, var(--green));
+    }
+
+    .battery-outline {
+      position: absolute;
+      left: 1px;
+      top: 5px;
+      width: 18px;
+      height: 12px;
+      border: 1.8px solid currentColor;
+      border-radius: 3px;
+    }
+
+    .battery-outline::after {
+      content: "";
+      position: absolute;
+      right: -4px;
+      top: 3px;
+      width: 2px;
+      height: 4px;
+      border-radius: 0 2px 2px 0;
+      background: currentColor;
+    }
+
+    .fill {
+      position: absolute;
+      left: 4px;
+      top: 8px;
+      height: 6px;
+      width: calc(12px * var(--level));
+      border-radius: 2px;
+      background: currentColor;
+    }
+
+    .ring {
+      position: absolute;
+      inset: 1px;
+      border-radius: 50%;
+      background: conic-gradient(currentColor calc(var(--level) * 1turn), rgba(255, 255, 255, 0.16) 0);
+    }
+
+    .ring::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      background: #172033;
+    }
+
+    .status-high { --level: 0.86; --level-color: var(--green); }
+    .status-mid { --level: 0.52; --level-color: var(--yellow); }
+    .status-low { --level: 0.18; --level-color: var(--red); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 12px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .badge::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+
+    .compact-panel {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .device-tile {
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.7);
+    }
+
+    .device-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: #e5e7eb;
+      font-size: 13px;
+    }
+
+    .meter {
+      position: relative;
+      height: 6px;
+      margin-top: 9px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      overflow: hidden;
+    }
+
+    .meter::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: calc(var(--level) * 100%);
+      border-radius: inherit;
+      background: var(--level-color, var(--green));
+    }
+
+    .ticker {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      max-width: 218px;
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #e5e7eb;
+      font-size: 12px;
+    }
+
+    .ticker b {
+      color: var(--level-color, var(--green));
+      font-size: 13px;
+    }
+
+    .mini-stack {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      max-width: 92px;
+      color: #e5e7eb;
+      font-size: 11px;
+    }
+
+    .mini-stack span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 920px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .wide {
+        grid-column: span 2;
+      }
+    }
+
+    @media (max-width: 640px) {
+      main {
+        width: min(100% - 24px, 1180px);
+        padding-top: 28px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .wide {
+        grid-column: span 1;
+      }
+
+      .taskbar {
+        gap: 8px;
+        padding-inline: 10px;
+      }
+
+      .device-chip {
+        max-width: 120px;
+      }
+
+      .compact-panel {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>BlueGauge 任务栏电量 UI 方案</h1>
+    <p class="intro">旧版任务栏电量 UI 探索稿，当前实现已收敛为极简内联和细电量条两套样式。</p>
+
+    <section class="grid" aria-label="任务栏电量 UI 方案列表">
+      <article class="card wide">
+        <div class="card-header">
+          <h2>任务栏设备标签</h2>
+          <p>直接在托盘旁显示设备名称和电量，适合主设备固定展示；长名称自动截断。</p>
+        </div>
+        <div class="preview">
+          <div class="taskbar">
+            <div class="tray named-tray">
+              <span class="device-chip status-high"><span class="icon status-high"><span class="battery-outline"></span><span class="fill"></span></span><strong>MX Master 3S</strong><span class="percent">86%</span></span>
+              <span class="device-chip status-mid"><span class="icon status-mid"><span class="battery-outline"></span><span class="fill"></span></span><strong>WH-1000XM5</strong><span class="percent">52%</span></span>
+            </div>
+            <div class="time">16:30<br>2026/6/27</div>
+          </div>
+          <div class="samples">
+            <span class="sample"><span class="device-chip status-high"><strong>Magic Keyboard</strong><span class="percent">91%</span></span></span>
+            <span class="sample"><span class="device-chip status-low"><strong>Xbox Wireless Controller</strong><span class="percent">18%</span></span></span>
+          </div>
+          <span class="badge">名称直显</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-header">
+          <h2>旧版圆角标签</h2>
+          <p>早期探索稿：任务栏用紧凑圆角标签展示关注设备，名称、图标、电量都在同一行。</p>
+        </div>
+        <div class="preview">
+          <div class="taskbar">
+            <div class="tray">
+              <span class="ticker status-high"><span class="icon status-high"><span class="ring"></span></span><span>MX Master 3S</span><b>86%</b></span>
+            </div>
+            <div class="time">16:30<br>2026/6/27</div>
+          </div>
+          <div class="samples">
+            <span class="sample"><span class="ticker status-mid"><span>WH-1000XM5</span><b>52%</b></span></span>
+            <span class="sample"><span class="ticker status-low"><span>Xbox Wireless Controller</span><b>18%</b></span></span>
+          </div>
+          <span class="badge">主设备优先</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-header">
+          <h2>紧凑双行卡片</h2>
+          <p>适合放在右键菜单或设置页顶部，名称完整性比任务栏更好。</p>
+        </div>
+        <div class="preview">
+          <div class="taskbar">
+            <div class="tray">
+              <span class="mini-stack status-high"><span class="icon status-high"><span class="battery-outline"></span><span class="fill"></span></span><span>MX Master 3S</span></span>
+              <span class="mini-stack status-low"><span class="icon status-low"><span class="battery-outline"></span><span class="fill"></span></span><span>Xbox Controller</span></span>
+            </div>
+            <div class="time">16:30<br>2026/6/27</div>
+          </div>
+          <div class="compact-panel">
+            <div class="device-tile status-high">
+              <div class="device-line"><span class="icon status-high"><span class="battery-outline"></span><span class="fill"></span></span><strong>MX Master 3S</strong><b>86%</b></div>
+              <div class="meter"></div>
+            </div>
+            <div class="device-tile status-low">
+              <div class="device-line"><span class="icon status-low"><span class="battery-outline"></span><span class="fill"></span></span><strong>Xbox Wireless Controller</strong><b>18%</b></div>
+              <div class="meter"></div>
+            </div>
+          </div>
+          <span class="badge">菜单友好</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-header">
+          <h2>名称 + 色条电量</h2>
+          <p>弱化图标，突出设备名和剩余电量，适合信息面板和通知样式。</p>
+        </div>
+        <div class="preview">
+          <div class="taskbar">
+            <div class="tray">
+              <span class="ticker status-mid"><span>WH-1000XM5</span><b>52%</b></span>
+            </div>
+            <div class="time">16:30<br>2026/6/27</div>
+          </div>
+          <div class="compact-panel">
+            <div class="device-tile status-high">
+              <div class="device-line"><strong>Magic Keyboard</strong><b>91%</b></div>
+              <div class="meter"></div>
+            </div>
+            <div class="device-tile status-mid">
+              <div class="device-line"><strong>WH-1000XM5</strong><b>52%</b></div>
+              <div class="meter"></div>
+            </div>
+          </div>
+          <span class="badge">名称突出</span>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

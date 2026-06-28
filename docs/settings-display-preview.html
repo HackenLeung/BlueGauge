@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlueGauge 设置页预览</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f7;
+      --surface: #ffffff;
+      --surface-soft: #f8fafc;
+      --line: #e2e8f0;
+      --line-strong: #cbd5e1;
+      --text: #102033;
+      --muted: #64748b;
+      --blue: #2563eb;
+      --blue-soft: #eff6ff;
+      --green: #16a34a;
+      --yellow: #ca8a04;
+      --red: #dc2626;
+      --shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+      font-size: 13px;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .window {
+      display: grid;
+      grid-template-columns: 158px minmax(0, 1fr);
+      width: min(920px, calc(100% - 32px));
+      min-height: 650px;
+      margin: 32px auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar {
+      padding: 22px 16px;
+      background: var(--surface-soft);
+      border-right: 1px solid var(--line);
+    }
+
+    .app-title {
+      margin: 0 0 22px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav button {
+      height: 36px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+
+    .nav button:hover {
+      background: #f1f5f9;
+      color: var(--text);
+    }
+
+    .nav button.active {
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-weight: 700;
+    }
+
+    .content {
+      padding: 26px 32px 34px;
+    }
+
+    .page {
+      display: none;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    .header {
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.4;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    .desc {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .section {
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section:last-child {
+      border-bottom: 0;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .settings-stack {
+      display: grid;
+      gap: 2px;
+    }
+
+    .setting-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 24px;
+      min-height: 58px;
+      padding: 8px 0;
+    }
+
+    .label {
+      min-width: 0;
+    }
+
+    .label strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .label span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .check-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .check-input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      flex: 0 0 16px;
+      accent-color: var(--blue);
+      cursor: pointer;
+    }
+
+    .number-field {
+      display: inline-grid;
+      grid-template-columns: 82px auto;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .number-field input {
+      width: 82px;
+      height: 30px;
+      border: 1px solid var(--line-strong);
+      border-radius: 5px;
+      background: #ffffff;
+      color: var(--text);
+      padding: 0 9px;
+      text-align: right;
+      outline: none;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    .number-field input:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    }
+
+    .unit {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .segmented {
+      display: inline-grid;
+      grid-template-columns: repeat(3, 48px);
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-soft);
+    }
+
+    .segmented button {
+      height: 28px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .segmented button.active {
+      background: #ffffff;
+      color: var(--blue);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.10);
+      font-weight: 700;
+    }
+
+    .style-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .style-card {
+      min-width: 0;
+      min-height: 138px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+    }
+
+    .style-card:hover {
+      border-color: #9eb8df;
+      background: #fbfdff;
+    }
+
+    .style-card.active {
+      border-color: var(--blue);
+      background: #ffffff;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.10);
+    }
+
+    .style-card h3 {
+      margin-bottom: 6px;
+    }
+
+    .style-note {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .mini-taskbar,
+    .taskbar-preview {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 7px;
+      padding: 0 9px;
+      border: 1px solid #cbd5e1;
+      border-radius: 7px;
+      background: #172133;
+      overflow: hidden;
+    }
+
+    .mini-taskbar {
+      height: 40px;
+    }
+
+    .taskbar-preview {
+      min-height: 42px;
+    }
+
+    .taskbar-preview.hidden {
+      display: none;
+    }
+
+    .chip,
+    .pill,
+    .mini-name,
+    .inline,
+    .strip {
+      min-width: 0;
+      color: #e5e7eb;
+      white-space: nowrap;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      max-width: 116px;
+      height: 24px;
+      padding: 0 7px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 11px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      max-width: 158px;
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.1);
+      font-size: 11px;
+    }
+
+    .inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      max-width: 126px;
+      height: 28px;
+      padding: 0 6px;
+      font-size: 11px;
+    }
+
+    .inline + .inline {
+      border-left: 1px solid rgba(203, 213, 225, 0.24);
+      padding-left: 12px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 9px;
+      border-radius: 50%;
+      background: var(--level-color, #22c55e);
+    }
+
+    .strip {
+      display: grid;
+      grid-template-rows: 20px 3px;
+      width: 142px;
+      height: 30px;
+      padding: 3px 8px 4px;
+      border: 1px solid #d6dee8;
+      border-radius: 6px;
+      background: #f8fafc;
+      color: #122033;
+      font-size: 11px;
+    }
+
+    .strip-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .meter {
+      height: 3px;
+      border-radius: 999px;
+      background: #d9e3ef;
+      overflow: hidden;
+    }
+
+    .meter span {
+      display: block;
+      width: calc(100% * var(--level));
+      height: 100%;
+      border-radius: inherit;
+      background: var(--level-color, #22c55e);
+    }
+
+    .chip span:first-child,
+    .pill span:first-child,
+    .mini-name span,
+    .inline .name,
+    .strip .name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .percent {
+      color: var(--level-color, #22c55e);
+      font-weight: 800;
+    }
+
+    .tiny {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 18px;
+      color: var(--level-color, #22c55e);
+    }
+
+    .battery {
+      position: relative;
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+    }
+
+    .battery::before {
+      content: "";
+      position: absolute;
+      left: 1px;
+      top: 5px;
+      width: 14px;
+      height: 9px;
+      border: 1.5px solid currentColor;
+      border-radius: 3px;
+    }
+
+    .battery::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 8px;
+      width: calc(8px * var(--level));
+      height: 4px;
+      border-radius: 2px;
+      background: currentColor;
+    }
+
+    .ring {
+      position: relative;
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: conic-gradient(currentColor calc(var(--level) * 1turn), rgba(255, 255, 255, 0.18) 0);
+    }
+
+    .ring::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      background: #172133;
+    }
+
+    .mini-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      max-width: 72px;
+      font-size: 10px;
+    }
+
+    .status-high {
+      --level: 0.86;
+      --level-color: var(--green);
+    }
+
+    .status-mid {
+      --level: 0.52;
+      --level-color: var(--yellow);
+    }
+
+    .status-low {
+      --level: 0.18;
+      --level-color: var(--red);
+    }
+
+    .device-list {
+      display: grid;
+      gap: 4px;
+    }
+
+    .device-row {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 9px;
+      min-height: 34px;
+      padding: 6px 8px;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .device-row:hover {
+      border-color: var(--line);
+      background: var(--surface-soft);
+    }
+
+    .device-row .check-input {
+      pointer-events: none;
+    }
+
+    .device-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .device-battery {
+      color: var(--level-color);
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .list-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 38px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+    }
+
+    .list-row strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .list-row span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .button-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .ghost {
+      height: 30px;
+      padding: 0 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .ghost:hover {
+      border-color: #9eb8df;
+      background: #fbfdff;
+    }
+
+    .primary {
+      height: 30px;
+      padding: 0 13px;
+      border: 1px solid var(--blue);
+      border-radius: 6px;
+      background: var(--blue);
+      color: #ffffff;
+      cursor: pointer;
+    }
+
+    @media (max-width: 760px) {
+      .window {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .nav {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .style-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="window">
+    <aside class="sidebar">
+      <p class="app-title">BlueGauge</p>
+      <nav class="nav" aria-label="设置分类">
+        <button class="active" type="button" data-page-target="scan">扫描</button>
+        <button type="button" data-page-target="notify">提醒</button>
+        <button type="button" data-page-target="display">显示</button>
+        <button type="button" data-page-target="system">系统</button>
+      </nav>
+    </aside>
+
+    <section class="content">
+      <article class="page active" data-page="scan">
+        <header class="header">
+          <h1>扫描</h1>
+          <p class="desc">管理蓝牙设备电量的后台扫描频率和设备发现结果。</p>
+        </header>
+
+        <section class="section">
+          <div class="settings-stack">
+            <div class="setting-row">
+              <div class="label">
+                <strong>自动扫描</strong>
+                <span>后台定时刷新已连接蓝牙设备的电量。</span>
+              </div>
+              <label class="check-control">
+                <input class="check-input" type="checkbox" checked>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div class="label">
+                <strong>启动时扫描</strong>
+                <span>应用启动后立即刷新一次设备状态。</span>
+              </div>
+              <label class="check-control">
+                <input class="check-input" type="checkbox" checked>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div class="label">
+                <strong>刷新间隔</strong>
+                <span>后台扫描蓝牙设备电量的时间间隔。</span>
+              </div>
+              <label class="number-field">
+                <input type="number" value="10" min="3" max="3600">
+                <span class="unit">秒</span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <div>
+              <h2>设备</h2>
+              <p class="desc">最近一次扫描到的设备会显示在这里。</p>
+            </div>
+          </div>
+
+          <div class="list">
+            <div class="list-row">
+              <div>
+                <strong>MX Master 3S</strong>
+                <span>已连接 · 86%</span>
+              </div>
+              <span class="badge">正常</span>
+            </div>
+            <div class="list-row">
+              <div>
+                <strong>WH-1000XM5</strong>
+                <span>已连接 · 52%</span>
+              </div>
+              <span class="badge">正常</span>
+            </div>
+            <div class="list-row">
+              <div>
+                <strong>Xbox Wireless Controller</strong>
+                <span>已连接 · 18%</span>
+              </div>
+              <span class="badge">低电量</span>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button class="ghost" type="button">清除缓存</button>
+            <button class="primary" type="button">立即扫描</button>
+          </div>
+        </section>
+      </article>
+
+      <article class="page" data-page="notify">
+        <header class="header">
+          <h1>提醒</h1>
+          <p class="desc">设置低电量通知和重复提醒频率。</p>
+        </header>
+
+        <section class="section">
+          <div class="settings-stack">
+            <div class="setting-row">
+              <div class="label">
+                <strong>低电量提醒</strong>
+                <span>设备电量低于阈值时显示系统通知。</span>
+              </div>
+              <label class="check-control">
+                <input class="check-input" type="checkbox" checked>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div class="label">
+                <strong>提醒阈值</strong>
+                <span>低于该电量时触发提醒。</span>
+              </div>
+              <div class="segmented" aria-label="提醒阈值">
+                <button type="button">10%</button>
+                <button class="active" type="button">20%</button>
+                <button type="button">30%</button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="label">
+                <strong>重复提醒间隔</strong>
+                <span>同一设备持续低电量时的再次提醒间隔。</span>
+              </div>
+              <label class="number-field">
+                <input type="number" value="30" min="5" max="1440">
+                <span class="unit">分钟</span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div class="label">
+                <strong>只提醒已连接设备</strong>
+                <span>忽略已经断开的历史设备。</span>
+              </div>
+              <label class="check-control">
+                <input class="check-input" type="checkbox" checked>
+              </label>
+            </div>
+          </div>
+        </section>
+      </article>
+
+      <article class="page" data-page="display">
+        <header class="header">
+          <h1>显示</h1>
+          <p class="desc">调整设备在任务栏和列表中的展示方式。</p>
+        </header>
+
+        <section class="section">
+          <div class="setting-row">
+            <div class="label">
+              <strong>显示未连接设备</strong>
+              <span>关闭后只显示已连接设备。</span>
+            </div>
+            <label class="check-control">
+              <input class="check-input" type="checkbox">
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <div>
+              <h2>显示样式</h2>
+              <p class="desc">每个选项直接展示它对应的任务栏效果。</p>
+            </div>
+          </div>
+
+          <div class="style-grid" role="list" aria-label="显示样式">
+            <button class="style-card active" type="button">
+              <h3>极简内联</h3>
+              <p class="style-note">最融入任务栏，占用少，适合长期常驻。</p>
+              <div class="mini-taskbar">
+                <span class="inline status-high"><span class="dot"></span><span class="name">FIIL Atom</span><b class="percent">100%</b></span>
+                <span class="inline status-high"><span class="dot"></span><span class="name">FIIL GS</span><b class="percent">100%</b></span>
+              </div>
+            </button>
+
+            <button class="style-card" type="button">
+              <h3>细电量条</h3>
+              <p class="style-note">可读性最强，不依赖小图标。</p>
+              <div class="mini-taskbar">
+                <span class="strip status-high"><span class="strip-top"><span class="name">FIIL Atom</span><b class="percent">100%</b></span><span class="meter"><span></span></span></span>
+                <span class="strip status-low"><span class="strip-top"><span class="name">手柄</span><b class="percent">18%</b></span><span class="meter"><span></span></span></span>
+              </div>
+            </button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="setting-row">
+            <div class="label">
+              <strong>最多显示设备数</strong>
+              <span>超过数量时优先显示置顶设备，其余按低电量补位。</span>
+            </div>
+            <div class="segmented" aria-label="最多显示设备数">
+              <button type="button">1</button>
+              <button type="button">2</button>
+              <button class="active" type="button">3</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <div>
+              <h2>置顶设备</h2>
+              <p class="desc">最多选择 3 个。整行可以点击，选中状态只由复选框表达。</p>
+            </div>
+          </div>
+
+          <div class="device-list">
+            <label class="device-row status-high">
+              <input class="check-input" type="checkbox" checked>
+              <span class="device-name">MX Master 3S</span>
+              <span class="device-battery">86%</span>
+            </label>
+
+            <label class="device-row status-mid">
+              <input class="check-input" type="checkbox" checked>
+              <span class="device-name">WH-1000XM5</span>
+              <span class="device-battery">52%</span>
+            </label>
+
+            <label class="device-row status-low">
+              <input class="check-input" type="checkbox">
+              <span class="device-name">Xbox Wireless Controller</span>
+              <span class="device-battery">18%</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="taskbar-preview" data-empty-preview>
+            <span class="chip status-high"><span class="battery tiny"></span><span>MX Master</span><b class="percent">86%</b></span>
+            <span class="chip status-mid"><span class="battery tiny"></span><span>WH-1000</span><b class="percent">52%</b></span>
+          </div>
+        </section>
+      </article>
+
+      <article class="page" data-page="system">
+        <header class="header">
+          <h1>系统</h1>
+          <p class="desc">设置启动、窗口和后台运行行为。</p>
+        </header>
+
+        <section class="section">
+          <div class="settings-stack">
+            <div class="setting-row">
+              <div class="label">
+                <strong>开机自启动</strong>
+                <span>登录 Windows 后自动启动 BlueGauge。</span>
+              </div>
+              <label class="check-control">
+                <input class="check-input" type="checkbox">
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div class="label">
+                <strong>保存调试日志</strong>
+                <span>记录扫描和通知状态，方便定位蓝牙电量异常。</span>
+              </div>
+              <label class="check-control">
+                <input class="check-input" type="checkbox">
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="button-row">
+            <button class="ghost" type="button">打开日志目录</button>
+            <button class="ghost" type="button">恢复默认设置</button>
+          </div>
+        </section>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const navButtons = document.querySelectorAll("[data-page-target]");
+    const pages = document.querySelectorAll("[data-page]");
+
+    for (const button of navButtons) {
+      button.addEventListener("click", () => {
+        const target = button.dataset.pageTarget;
+        for (const item of navButtons) {
+          item.classList.toggle("active", item === button);
+        }
+        for (const page of pages) {
+          page.classList.toggle("active", page.dataset.page === target);
+        }
+      });
+    }
+
+    const styleCards = document.querySelectorAll(".style-card");
+    for (const card of styleCards) {
+      card.addEventListener("click", () => {
+        for (const item of styleCards) {
+          item.classList.toggle("active", item === card);
+        }
+      });
+    }
+
+    const segmentedGroups = document.querySelectorAll(".segmented");
+    for (const group of segmentedGroups) {
+      const buttons = group.querySelectorAll("button");
+      for (const button of buttons) {
+        button.addEventListener("click", () => {
+          for (const item of buttons) {
+            item.classList.toggle("active", item === button);
+          }
+        });
+      }
+    }
+
+    const deviceRows = document.querySelectorAll(".device-row");
+    for (const row of deviceRows) {
+      const input = row.querySelector("input");
+      input.addEventListener("change", () => {
+        const checked = document.querySelectorAll(".device-row input:checked").length;
+        if (input.checked && checked > 3) {
+          input.checked = false;
+        }
+      });
+    }
+  </script>
+</body>
+</html>

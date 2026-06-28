@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlueGauge Win32/GDI 任务栏显示方案</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #eef2f7;
+      --surface: #ffffff;
+      --soft: #f8fafc;
+      --line: #dbe4ef;
+      --line-strong: #c2cedd;
+      --text: #102033;
+      --muted: #64748b;
+      --taskbar: #111827;
+      --taskbar-2: #172033;
+      --green: #18b35d;
+      --yellow: #d99a10;
+      --red: #df3b3b;
+      --blue: #2563eb;
+      --shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+      font-size: 13px;
+    }
+
+    main {
+      width: min(1080px, calc(100% - 36px));
+      margin: 28px auto 44px;
+    }
+
+    header {
+      margin-bottom: 18px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 24px;
+      line-height: 1.3;
+    }
+
+    .lead {
+      margin-top: 8px;
+      max-width: 780px;
+      color: var(--muted);
+      line-height: 1.75;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      display: grid;
+      gap: 13px;
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .title-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+    }
+
+    h2 {
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    .note {
+      margin-top: 4px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 9px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #36506d;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .taskbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 0;
+      height: 44px;
+      padding: 0 10px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--taskbar);
+    }
+
+    .taskbar.light {
+      border: 1px solid #d6dee8;
+      background: #f2f5f8;
+    }
+
+    .gdi-meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .gdi-meta span {
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--soft);
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .devices {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 0;
+      width: 100%;
+      gap: 7px;
+    }
+
+    .battery {
+      position: relative;
+      width: 18px;
+      height: 14px;
+      flex: 0 0 18px;
+      color: var(--level, var(--green));
+    }
+
+    .battery::before {
+      content: "";
+      position: absolute;
+      left: 1px;
+      top: 3px;
+      width: 13px;
+      height: 8px;
+      border: 1px solid currentColor;
+      border-radius: 2px;
+    }
+
+    .battery::after {
+      content: "";
+      position: absolute;
+      left: 15px;
+      top: 6px;
+      width: 2px;
+      height: 3px;
+      border-radius: 1px;
+      background: currentColor;
+    }
+
+    .fill {
+      position: absolute;
+      left: 4px;
+      top: 6px;
+      width: calc(8px * var(--level-frac, 1));
+      height: 2px;
+      border-radius: 1px;
+      background: currentColor;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      flex: 0 0 10px;
+      border-radius: 50%;
+      background: var(--level, var(--green));
+      box-shadow: 0 0 0 3px rgba(24, 179, 93, 0.14);
+    }
+
+    .ring {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      border: 3px solid rgba(148, 163, 184, 0.38);
+      border-top-color: var(--level, var(--green));
+      border-right-color: var(--level, var(--green));
+      border-radius: 50%;
+    }
+
+    .name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .percent {
+      min-width: 42px;
+      text-align: right;
+      color: var(--level, var(--green));
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .item {
+      --level: var(--green);
+      --level-frac: 1;
+      min-width: 0;
+      color: #e8edf5;
+      font-size: 12px;
+    }
+
+    .item.low {
+      --level: var(--red);
+      --level-frac: 0.18;
+    }
+
+    .item.mid {
+      --level: var(--yellow);
+      --level-frac: 0.52;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      width: 132px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid #41516a;
+      border-radius: 7px;
+      background: #263349;
+    }
+
+    .chip .name {
+      flex: 1 1 auto;
+    }
+
+    .capsule {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: 136px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #263349;
+    }
+
+    .capsule .name {
+      flex: 1 1 auto;
+    }
+
+    .inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 102px;
+      height: 28px;
+      padding: 0 6px;
+      color: #edf2f7;
+    }
+
+    .inline + .inline {
+      border-left: 1px solid rgba(203, 213, 225, 0.24);
+      padding-left: 12px;
+    }
+
+    .strip {
+      display: grid;
+      grid-template-rows: 21px 3px;
+      width: 142px;
+      height: 30px;
+      padding: 3px 8px 4px;
+      border-radius: 6px;
+      background: #f8fafc;
+      color: #122033;
+    }
+
+    .strip-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .strip .percent {
+      color: var(--level, var(--green));
+    }
+
+    .meter {
+      height: 3px;
+      border-radius: 999px;
+      background: #d9e3ef;
+      overflow: hidden;
+    }
+
+    .meter span {
+      display: block;
+      height: 100%;
+      width: calc(100% * var(--level-frac, 1));
+      border-radius: inherit;
+      background: var(--level, var(--green));
+    }
+
+    .glass {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      width: 128px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid #d6dee8;
+      border-radius: 7px;
+      background: #ffffff;
+      color: #102033;
+    }
+
+    .glass .name {
+      flex: 1 1 auto;
+    }
+
+    .glass .percent {
+      color: var(--level, var(--green));
+    }
+
+    .compact {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: 82px;
+      height: 28px;
+      padding: 0 7px;
+      border-radius: 6px;
+      background: #263349;
+    }
+
+    .compact .name {
+      flex: 1 1 auto;
+      max-width: 42px;
+    }
+
+    .stackless {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: 124px;
+      height: 30px;
+      padding: 0 9px;
+      border-radius: 4px;
+      background: #1d2637;
+      box-shadow: inset 0 -3px 0 var(--level, var(--green));
+    }
+
+    .stackless .name {
+      flex: 1 1 auto;
+    }
+
+    .choice {
+      margin-top: 18px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .choice h3 {
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .choice p {
+      margin-top: 7px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    @media (max-width: 860px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .gdi-meta {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Win32/GDI 自绘任务栏显示方案</h1>
+      <p class="lead">这些方案都按 GDI 容易落地的方式设计：实色背景、细边框、固定高度、横向排列、百分比预留足够宽度。示例都包含 100%，方便检查不会再变成 00%。</p>
+    </header>
+
+    <section class="grid" aria-label="任务栏显示方案">
+      <article class="card">
+        <div class="title-row">
+          <div>
+            <h2>方案 A：深色设备标签</h2>
+            <p class="note">最接近 settings-display-preview，任务栏里像一组暗色标签。</p>
+          </div>
+          <span class="tag">推荐</span>
+        </div>
+        <div class="taskbar">
+          <div class="devices">
+            <span class="item chip"><span class="battery"><span class="fill"></span></span><span class="name">FIIL Atom</span><span class="percent">100%</span></span>
+            <span class="item chip"><span class="battery"><span class="fill"></span></span><span class="name">FIIL GS</span><span class="percent">100%</span></span>
+            <span class="item chip low"><span class="battery"><span class="fill"></span></span><span class="name">手柄</span><span class="percent">18%</span></span>
+          </div>
+        </div>
+        <div class="gdi-meta">
+          <span>外层：深色无白框</span>
+          <span>单项：132 x 28</span>
+          <span>适合：2-3 个设备</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="title-row">
+          <div>
+            <h2>方案 B：极简内联</h2>
+            <p class="note">不画每个 chip 的外框，只用分隔线，最不打扰任务栏。</p>
+          </div>
+          <span class="tag">最融合</span>
+        </div>
+        <div class="taskbar">
+          <div class="devices">
+            <span class="item inline"><span class="dot"></span><span class="name">FIIL Atom</span><span class="percent">100%</span></span>
+            <span class="item inline"><span class="dot"></span><span class="name">FIIL GS</span><span class="percent">100%</span></span>
+            <span class="item inline mid"><span class="dot"></span><span class="name">耳机</span><span class="percent">52%</span></span>
+          </div>
+        </div>
+        <div class="gdi-meta">
+          <span>外层：贴近任务栏</span>
+          <span>图标：圆点最稳</span>
+          <span>适合：长期常驻</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="title-row">
+          <div>
+            <h2>方案 D：细电量条</h2>
+            <p class="note">弱化电池图标，用底部细条表达电量，100% 不容易出错。</p>
+          </div>
+          <span class="tag">清晰</span>
+        </div>
+        <div class="taskbar light">
+          <div class="devices">
+            <span class="item strip"><span class="strip-top"><span class="name">FIIL Atom</span><span class="percent">100%</span></span><span class="meter"><span></span></span></span>
+            <span class="item strip"><span class="strip-top"><span class="name">FIIL GS</span><span class="percent">100%</span></span><span class="meter"><span></span></span></span>
+            <span class="item strip low"><span class="strip-top"><span class="name">手柄</span><span class="percent">18%</span></span><span class="meter"><span></span></span></span>
+          </div>
+        </div>
+        <div class="gdi-meta">
+          <span>外层：浅色可选</span>
+          <span>无小电池图标</span>
+          <span>适合：可读性优先</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="title-row">
+          <div>
+            <h2>方案 E：浅色浮片</h2>
+            <p class="note">如果坚持浅色，这是更克制的版本：无大白框，只有单项边框。</p>
+          </div>
+          <span class="tag">浅色</span>
+        </div>
+        <div class="taskbar light">
+          <div class="devices">
+            <span class="item glass"><span class="battery"><span class="fill"></span></span><span class="name">FIIL Atom</span><span class="percent">100%</span></span>
+            <span class="item glass"><span class="battery"><span class="fill"></span></span><span class="name">FIIL GS</span><span class="percent">100%</span></span>
+          </div>
+        </div>
+        <div class="gdi-meta">
+          <span>外层：无二次大框</span>
+          <span>单项：白底细线</span>
+          <span>适合：浅色任务栏</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="title-row">
+          <div>
+            <h2>方案 F：紧凑短名</h2>
+            <p class="note">任务栏空间最省，只保留短名和颜色，不显示百分比。</p>
+          </div>
+          <span class="tag">省空间</span>
+        </div>
+        <div class="taskbar">
+          <div class="devices">
+            <span class="item compact"><span class="battery"><span class="fill"></span></span><span class="name">Atom</span></span>
+            <span class="item compact"><span class="battery"><span class="fill"></span></span><span class="name">GS</span></span>
+            <span class="item compact low"><span class="battery"><span class="fill"></span></span><span class="name">Pad</span></span>
+          </div>
+        </div>
+        <div class="gdi-meta">
+          <span>外层：深色底</span>
+          <span>单项：82 x 28</span>
+          <span>适合：3 个设备</span>
+        </div>
+      </article>
+    </section>
+
+    <section class="choice">
+      <h3>我的建议</h3>
+      <p>如果你想和 settings-display-preview 统一，优先选方案 A。它最容易把设置页预览和实际任务栏做成一套，也能完整显示 100%。如果你最在意融入任务栏，选方案 B，少画框会更自然。方案 D 适合彻底避开小电池图标的 GDI 细节问题。</p>
+    </section>
+  </main>
+</body>
+</html>

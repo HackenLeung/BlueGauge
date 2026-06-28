@@ -1,0 +1,34 @@
+#include "../src/resource.h"
+
+IDI_APP ICON "app.ico"
+IDI_APP_WARNING ICON "warning.ico"
+IDI_DISCONNECTED ICON "disconnected.ico"
+
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "HackenLeung"
+            VALUE "FileDescription", "BlueGauge 蓝牙电量监控"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "InternalName", "BlueGauge"
+            VALUE "OriginalFilename", "BlueGauge.exe"
+            VALUE "LegalCopyright", "Copyright (c) 2026 HackenLeung"
+            VALUE "ProductName", "BlueGauge"
+            VALUE "ProductVersion", "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END

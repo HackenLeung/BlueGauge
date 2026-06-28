@@ -1,46 +1,28 @@
-# SplusXBTMeter
+# BlueGauge
 
-Windows 10/11 原生轻量级蓝牙电量监控工具。程序使用 C++17 与 Win32 API 编写，常驻系统托盘，支持设备列表、刷新、低电量提醒、设置保存、开机自启、单实例和日志。
+BlueGauge 是一个 Windows 10/11 原生轻量级蓝牙电量监控工具。它常驻系统托盘，用来查看蓝牙设备连接状态和电量，并可在任务栏显示常用设备的电量信息。
+
+它的定位不是完整的蓝牙管理器，而是一个安静的小状态提示：需要时能看见，不需要时尽量不占地方、不打扰、不引入大型依赖。
+
+项目使用 C++20 与 Win32/GDI 实现，不依赖 WPF、WinUI 或大型 UI 框架，目标是保持体积小、启动快、界面简洁。 构建的 exe 约 646 KB,适合作为一个长期常驻的小功能使用。
+
+## 预览
+
+![BlueGauge 设置页预览](docs/images/bluegauge-preview.png)
+
+设置页可预览任务栏电量显示样式，并管理置顶设备、刷新入口和提醒选项。
 
 ## 功能
 
-- 系统托盘常驻，不显示主窗口
-- 托盘 tooltip 显示蓝牙设备摘要
-- 右键菜单：设备列表、立即刷新、设置、开机自启、关于、退出
-- 后台线程刷新设备，防止刷新重入
-- 低电量提醒，同一低电量区间只提醒一次
-- INI 配置：刷新间隔、低电量阈值、显示未连接设备、低电量提醒、开机自启
-- 日志：`%AppData%\SplusXBTMeter\logs\app.log`
-- 单实例运行
+- 系统托盘常驻，支持自绘托盘菜单和设备列表。
+- 任务栏电量显示，支持“极简内联”和“细电量条”两种样式。
+- 支持置顶设备，最多优先显示 3 个常用设备。
+- 使用真实蓝牙连接状态判断，未连接设备不会显示到任务栏。
+- 支持蓝牙设备变化事件触发刷新，并保留定时扫描作为兜底。
+- 设置页可调整刷新间隔、低电量阈值、任务栏显示样式、置顶设备和提醒开关。
+- 支持低电量提醒和连接/断开变化提醒。
+- 支持开机自启、手动刷新、检查更新、单实例运行和本地日志。
 
-## 蓝牙兼容说明
+## 致谢
 
-当前实现优先提供稳定的 Win32 托盘程序框架，并通过 SetupAPI / CfgMgr32 枚举系统蓝牙设备。经典蓝牙和 BLE Battery Service 电量读取接口已拆分到独立模块，调用失败会写入日志并显示“未知”，不会导致程序崩溃。不同厂商蓝牙设备在 Windows 上暴露电量的方式差异较大，后续可在 `src/bluetooth/btc_battery.cpp` 与 `src/bluetooth/ble_battery.cpp` 中按设备能力扩展。
-
-## 编译
-
-需要：
-
-- Windows 10/11
-- Visual Studio 2022 C++ 桌面开发工具
-- CMake 3.20+
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-```
-
-生成文件：
-
-```text
-build\Release\SplusXBTMeter.exe
-```
-
-## 运行
-
-直接运行 `SplusXBTMeter.exe`。程序会进入系统托盘。再次运行时会提示程序已运行。
-
-## 打包 Release exe
-
-Release 配置默认使用 `/O2`、LTCG、`/OPT:REF`、`/OPT:ICF`，并静态链接 MSVC 运行库，资源和图标内嵌到 exe。普通构建目标体积通常可控制在 10MB 以内，实际体积取决于工具链版本和运行库链接方式。
-
+BlueGauge 的思路参考了 [SpLlry/SplusXBTMeter](https://github.com/SpLlry/SplusXBTMeter)
