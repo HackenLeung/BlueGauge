@@ -43,6 +43,7 @@ private:
     void UpdateTray();
     void UpdateStatusWindow();
     void PositionStatusWindow();
+    bool IsOtherApplicationFullscreen() const;
     void PaintStatusWindow(HWND hwnd);
     HWND FindTaskbarWindow() const;
     HWND FindTrayNotifyWindow(HWND taskbar) const;

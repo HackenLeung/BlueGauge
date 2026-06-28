@@ -33,10 +33,11 @@ constexpr UINT_PTR kRefreshTimer = 3001;
 constexpr UINT_PTR kTrayPanelCloseTimer = 3002;
 constexpr UINT_PTR kConnectionToastTimer = 3003;
 constexpr UINT_PTR kBluetoothChangeDebounceTimer = 3004;
+constexpr UINT_PTR kTaskbarVisibilityTimer = 3005;
 constexpr UINT kConnectionToastDurationMs = 2800;
 constexpr UINT kBluetoothChangeDebounceMs = 1500;
-constexpr DWORD kTaskbarDisplayGraceMs = 30000;
-constexpr int kTaskbarEmptyHideScans = 3;
+constexpr UINT kTaskbarVisibilityPollMs = 500;
+constexpr int kFullscreenRectTolerance = 2;
 
 bool TryReadInt(HWND hwnd, int id, int& value) {
     wchar_t text[32]{};
@@ -120,6 +121,16 @@ bool IsTaskbarCentered() {
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         L"TaskbarAl", RRF_RT_REG_DWORD, nullptr, &value, &size);
     return status != ERROR_SUCCESS || value != 0;
+}
+
+bool IsShellDesktopWindow(HWND hwnd) {
+    wchar_t className[64]{};
+    if (GetClassNameW(hwnd, className, 64) <= 0) {
+        return false;
+    }
+    return lstrcmpW(className, L"Progman") == 0
+        || lstrcmpW(className, L"WorkerW") == 0
+        || lstrcmpW(className, L"Shell_TrayWnd") == 0;
 }
 
 HFONT CreateUiFont(int pointSize, int weight = FW_NORMAL) {
@@ -612,6 +623,7 @@ int App::Run(HINSTANCE instance, int showCmd) {
     tray_.Add(hwnd_, instance_);
     SyncBatteryWindow();
     StartTimer();
+    SetTimer(hwnd_, kTaskbarVisibilityTimer, kTaskbarVisibilityPollMs, nullptr);
     bluetoothWatcher_.Start(hwnd_, WM_BLUETOOTH_DEVICE_CHANGED);
     RefreshAsync();
 
@@ -691,9 +703,57 @@ bool App::CreateBatteryWindow() {
     return true;
 }
 
+bool App::IsOtherApplicationFullscreen() const {
+    HWND foreground = GetForegroundWindow();
+    if (!foreground) {
+        return false;
+    }
+
+    HWND root = GetAncestor(foreground, GA_ROOT);
+    if (root) {
+        foreground = root;
+    }
+
+    if (!IsWindowVisible(foreground) || IsIconic(foreground) || IsShellDesktopWindow(foreground)) {
+        return false;
+    }
+
+    DWORD foregroundProcessId = 0;
+    GetWindowThreadProcessId(foreground, &foregroundProcessId);
+    if (foregroundProcessId == 0 || foregroundProcessId == GetCurrentProcessId()) {
+        return false;
+    }
+
+    RECT windowRect{};
+    if (!GetWindowRect(foreground, &windowRect)) {
+        return false;
+    }
+
+    HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+    if (!monitor) {
+        return false;
+    }
+
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(monitor, &monitorInfo)) {
+        return false;
+    }
+
+    return windowRect.left <= monitorInfo.rcMonitor.left + kFullscreenRectTolerance
+        && windowRect.top <= monitorInfo.rcMonitor.top + kFullscreenRectTolerance
+        && windowRect.right >= monitorInfo.rcMonitor.right - kFullscreenRectTolerance
+        && windowRect.bottom >= monitorInfo.rcMonitor.bottom - kFullscreenRectTolerance;
+}
+
 void App::SyncBatteryWindow() {
-    if (TaskbarDisplayDevices().empty()) {
+    const auto visibleDevices = TaskbarDisplayDevices();
+    const bool blockedByFullscreen = !visibleDevices.empty() && IsOtherApplicationFullscreen();
+    if (visibleDevices.empty() || blockedByFullscreen) {
         if (statusWindow_) {
+            if (blockedByFullscreen) {
+                Logger::Instance().Info(L"任务栏电量显示隐藏：其他应用全屏");
+            }
             DestroyWindow(statusWindow_);
             statusWindow_ = nullptr;
         }
@@ -743,38 +803,16 @@ void App::UpdateTaskbarDisplayCache() {
         return;
     }
 
-    if (taskbarDisplayCache_.empty()) {
-        return;
+    if (!taskbarDisplayCache_.empty()) {
+        Logger::Instance().Info(L"任务栏电量显示隐藏：未读取到可显示设备");
     }
-
-    ++taskbarEmptyScanCount_;
-    const DWORD now = GetTickCount();
-    if (taskbarDisplayCacheTick_ == 0
-        || now - taskbarDisplayCacheTick_ > kTaskbarDisplayGraceMs
-        || taskbarEmptyScanCount_ >= kTaskbarEmptyHideScans) {
-        Logger::Instance().Info(L"任务栏电量显示隐藏：连续未读取到可显示设备");
-        taskbarDisplayCache_.clear();
-        taskbarDisplayCacheTick_ = 0;
-        taskbarEmptyScanCount_ = 0;
-        return;
-    }
-
-    Logger::Instance().Info(L"任务栏电量显示保留上次结果，等待下一轮扫描确认");
+    taskbarDisplayCache_.clear();
+    taskbarDisplayCacheTick_ = 0;
+    taskbarEmptyScanCount_ = 0;
 }
 
 std::vector<BluetoothDeviceInfo> App::TaskbarDisplayDevices() const {
-    const auto visibleDevices = TaskbarDevices(devices_, configStore_.Get());
-    if (!visibleDevices.empty()) {
-        return visibleDevices;
-    }
-    if (taskbarDisplayCache_.empty() || taskbarDisplayCacheTick_ == 0) {
-        return {};
-    }
-    const DWORD now = GetTickCount();
-    if (now - taskbarDisplayCacheTick_ > kTaskbarDisplayGraceMs) {
-        return {};
-    }
-    return taskbarDisplayCache_;
+    return TaskbarDevices(devices_, configStore_.Get());
 }
 
 void App::ClearDeviceCache() {
@@ -1924,6 +1962,7 @@ void App::ToggleStartup() {
 void App::Shutdown() {
     KillTimer(hwnd_, kRefreshTimer);
     KillTimer(hwnd_, kBluetoothChangeDebounceTimer);
+    KillTimer(hwnd_, kTaskbarVisibilityTimer);
     bluetoothWatcher_.Stop();
     tray_.Remove();
     CloseTrayPanels();
@@ -2482,6 +2521,8 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             RefreshAsync();
         } else if (wParam == kBluetoothChangeDebounceTimer) {
             RefreshFromBluetoothChange();
+        } else if (wParam == kTaskbarVisibilityTimer) {
+            SyncBatteryWindow();
         } else if (wParam == kTrayPanelCloseTimer) {
             if ((!trayPanelWindow_ || !IsWindow(trayPanelWindow_))
                 && (!devicePanelWindow_ || !IsWindow(devicePanelWindow_))) {

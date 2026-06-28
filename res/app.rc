@@ -5,8 +5,8 @@ IDI_APP_WARNING ICON "warning.ico"
 IDI_DISCONNECTED ICON "disconnected.ico"
 
 1 VERSIONINFO
-FILEVERSION 1,0,1,0
-PRODUCTVERSION 1,0,1,0
+FILEVERSION 1,0,2,0
+PRODUCTVERSION 1,0,2,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -19,12 +19,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "HackenLeung"
             VALUE "FileDescription", "BlueGauge Bluetooth Battery Monitor"
-            VALUE "FileVersion", "1.0.1"
+            VALUE "FileVersion", "1.0.2"
             VALUE "InternalName", "BlueGauge"
             VALUE "OriginalFilename", "BlueGauge.exe"
             VALUE "LegalCopyright", "Copyright (c) 2026 HackenLeung"
             VALUE "ProductName", "BlueGauge"
-            VALUE "ProductVersion", "1.0.1"
+            VALUE "ProductVersion", "1.0.2"
         END
     END
     BLOCK "VarFileInfo"
