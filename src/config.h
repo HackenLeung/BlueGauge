@@ -1,9 +1,13 @@
 #pragma once
 
+#include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
 constexpr int kTaskbarBatteryStyleCount = 2;
+// 别名条目上限，够用且配置文件不会无限长。
+constexpr size_t kMaxDeviceAliases = 32;
 
 struct AppConfig {
     int refreshIntervalSeconds = 10;
@@ -17,6 +21,8 @@ struct AppConfig {
     int taskbarBatteryStyle = 0;
     int taskbarMaxDevices = 3;
     std::vector<std::wstring> pinnedDeviceIds;
+    // 设备 id -> 自定义显示名。缺失时用扫描到的系统名。
+    std::map<std::wstring, std::wstring> deviceAliases;
 };
 
 class ConfigStore {

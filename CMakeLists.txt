@@ -27,6 +27,7 @@ add_executable(BlueGauge WIN32
     src/bluetooth/winrt_bluetooth_status.cpp
     src/bluetooth/btc_battery.cpp
     src/bluetooth/ble_battery.cpp
+    src/bluetooth/hidpp_battery.cpp
     res/app.rc
 )
 
@@ -46,6 +47,7 @@ target_link_libraries(BlueGauge PRIVATE
     winhttp
     setupapi
     cfgmgr32
+    hid
     bthprops
     ole32
     runtimeobject

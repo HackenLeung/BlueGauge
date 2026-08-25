@@ -56,6 +56,16 @@ void ConfigStore::Load() {
             config_.pinnedDeviceIds.push_back(id);
         }
     }
+
+    config_.deviceAliases.clear();
+    for (size_t i = 1; i <= kMaxDeviceAliases; ++i) {
+        const std::wstring suffix = std::to_wstring(i);
+        std::wstring id = ReadProfileString(L"DeviceNames", (L"Id" + suffix).c_str(), path_);
+        std::wstring alias = ReadProfileString(L"DeviceNames", (L"Name" + suffix).c_str(), path_);
+        if (!id.empty() && !alias.empty()) {
+            config_.deviceAliases[id] = alias;
+        }
+    }
 }
 
 void ConfigStore::Save() const {
@@ -76,5 +86,21 @@ void ConfigStore::Save() const {
         const wchar_t* value = i <= static_cast<int>(config_.pinnedDeviceIds.size()) ? config_.pinnedDeviceIds[static_cast<size_t>(i - 1)].c_str() : L"";
         WritePrivateProfileStringW(L"PinnedDevices", key.c_str(), value, path_.c_str());
     }
+    // 先整段删除再写：条目减少时避免残留旧的 Id5/Name5。
+    WritePrivateProfileStringW(L"DeviceNames", nullptr, nullptr, path_.c_str());
+    size_t aliasIndex = 1;
+    for (const auto& [id, alias] : config_.deviceAliases) {
+        if (aliasIndex > kMaxDeviceAliases) {
+            break;
+        }
+        if (id.empty() || alias.empty()) {
+            continue;
+        }
+        const std::wstring suffix = std::to_wstring(aliasIndex);
+        WritePrivateProfileStringW(L"DeviceNames", (L"Id" + suffix).c_str(), id.c_str(), path_.c_str());
+        WritePrivateProfileStringW(L"DeviceNames", (L"Name" + suffix).c_str(), alias.c_str(), path_.c_str());
+        ++aliasIndex;
+    }
+
     WritePrivateProfileStringW(L"General", L"ConfigVersion", std::to_wstring(kConfigVersion).c_str(), path_.c_str());
 }

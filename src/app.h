@@ -27,6 +27,8 @@ private:
     static LRESULT CALLBACK AboutWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK UpdateWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK ConnectionToastWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK RenameWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK RenameEditProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 
     bool CreateHiddenWindow(HINSTANCE instance);
@@ -40,6 +42,8 @@ private:
     std::vector<BluetoothDeviceInfo> TaskbarDisplayDevices() const;
     void ClearDeviceCache();
     void ApplyScanResult(std::vector<BluetoothDeviceInfo>* result);
+    void ApplyDeviceAliases(std::vector<BluetoothDeviceInfo>& devices) const;
+    void RefreshDeviceNames();
     void UpdateTray();
     void UpdateStatusWindow();
     void PositionStatusWindow();
@@ -75,6 +79,12 @@ private:
     void ShowUpdateDialog(bool startCheck);
     void PaintUpdateWindow(HWND hwnd);
     void HandleUpdateClick(HWND hwnd, int x, int y);
+    void ShowRenameDialog(const std::wstring& deviceId, const std::wstring& systemName, const std::wstring& currentName);
+    void PaintRenameWindow(HWND hwnd);
+    void HandleRenameClick(HWND hwnd, int x, int y);
+    void CommitRename();
+    void ResetRenameToSystemName();
+    void CloseRenameDialog();
     void CheckForUpdatesAsync();
     void ToggleStartup();
     void Shutdown();
@@ -88,8 +98,13 @@ private:
     HWND aboutWindow_ = nullptr;
     HWND updateWindow_ = nullptr;
     HWND connectionToastWindow_ = nullptr;
+    HWND renameWindow_ = nullptr;
+    HWND renameEdit_ = nullptr;
     HWND taskbarWindow_ = nullptr;
     HFONT settingsControlFont_ = nullptr;
+    HFONT renameControlFont_ = nullptr;
+    std::wstring renameDeviceId_;
+    std::wstring renameSystemName_;
     UINT taskbarCreatedMessage_ = 0;
     int activeSettingsSection_ = 0;
     int settingsScrollY_ = 0;

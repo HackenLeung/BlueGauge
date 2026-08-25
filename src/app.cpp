@@ -29,6 +29,7 @@ constexpr wchar_t kDevicePanelClass[] = L"BlueGauge.DevicePanelWindow";
 constexpr wchar_t kAboutClass[] = L"BlueGauge.AboutWindow";
 constexpr wchar_t kUpdateClass[] = L"BlueGauge.UpdateWindow";
 constexpr wchar_t kConnectionToastClass[] = L"BlueGauge.ConnectionToastWindow";
+constexpr wchar_t kRenameClass[] = L"BlueGauge.RenameWindow";
 constexpr UINT_PTR kRefreshTimer = 3001;
 constexpr UINT_PTR kTrayPanelCloseTimer = 3002;
 constexpr UINT_PTR kConnectionToastTimer = 3003;
@@ -61,7 +62,18 @@ void SetIntText(HWND hwnd, int id, int value) {
 enum SettingsId {
     IDC_REFRESH = 4001,
     IDC_THRESHOLD = 4002,
+    IDC_RENAME_EDIT = 4003,
 };
+
+// 任务栏单项最宽 205/210 px，过长的名字会被 DT_END_ELLIPSIS 截掉，所以在输入侧就限住。
+constexpr int kMaxAliasLength = 24;
+// 扫描页设备列表最多画几行，重命名入口跟着这个数。
+constexpr int kScanDeviceListMax = 5;
+// 回车 / ESC 由 EDIT 子类过程转成这两条消息，避免在 EDIT 自己的消息里销毁父窗口。
+constexpr UINT WM_RENAME_COMMIT = WM_APP + 20;
+constexpr UINT WM_RENAME_CANCEL = WM_APP + 21;
+// 弹窗同时只有一个，原 EDIT 过程用一个静态指针存就够。
+WNDPROC g_renameEditBaseProc = nullptr;
 
 enum SettingsSection {
     SectionScan = 0,
@@ -336,6 +348,11 @@ RECT ScanPrimaryButtonRect(int right, int top) {
     return { right - kScanPrimaryButtonWidth, top + kScanButtonTop, right, top + kScanButtonTop + kScanButtonHeight };
 }
 
+// 徽章左边界是 row.right - 92，按钮排在它左侧。绘制和命中判定共用这一处坐标。
+RECT ScanDeviceRenameButtonRect(const RECT& row) {
+    return { row.right - 156, row.top + 10, row.right - 100, row.bottom - 10 };
+}
+
 struct DeviceBadgeStyle {
     std::wstring text;
     COLORREF textColor = kSubtleText;
@@ -384,9 +401,13 @@ void DrawScanDeviceRow(HDC hdc, const BluetoothDeviceInfo& device, const RECT& r
     RECT badgeRect{ row.right - 92, row.top + 10, row.right - 10, row.bottom - 10 };
     DrawBadge(hdc, badgeRect, badge, smallFont);
 
-    DrawTextLine(hdc, device.name, { row.left + 10, row.top + 5, badgeRect.left - 12, row.top + 24 },
+    const RECT renameButton = ScanDeviceRenameButtonRect(row);
+    DrawButtonFrame(hdc, renameButton, L"重命名", smallFont, false);
+
+    const int textRight = renameButton.left - 12;
+    DrawTextLine(hdc, device.name, { row.left + 10, row.top + 5, textRight, row.top + 24 },
         DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, nameFont, kText);
-    DrawTextLine(hdc, DeviceStatusText(device), { row.left + 10, row.top + 23, badgeRect.left - 12, row.bottom - 5 },
+    DrawTextLine(hdc, DeviceStatusText(device), { row.left + 10, row.top + 23, textRight, row.bottom - 5 },
         DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, smallFont,
         device.connected ? kSubtleText : RGB(100, 116, 139));
 }
@@ -852,8 +873,48 @@ std::wstring App::BuildScanSummaryText() const {
         + L" 个设备 · " + std::to_wstring(lastScanBatteryCount_) + L" 个有电量";
 }
 
+void App::ApplyDeviceAliases(std::vector<BluetoothDeviceInfo>& devices) const {
+    const auto& aliases = configStore_.Get().deviceAliases;
+    for (auto& device : devices) {
+        if (device.systemName.empty()) {
+            // 扫描结果：此时 name 还是系统名，先留一份。
+            device.systemName = device.name;
+        } else {
+            // 就地重算：先还原再套别名，保证幂等。
+            device.name = device.systemName;
+        }
+        auto it = aliases.find(device.id);
+        if (it != aliases.end() && !it->second.empty()) {
+            device.name = it->second;
+        }
+    }
+
+    // 扫描器排序时用的是系统名，套完别名要按显示名重排一次。
+    std::sort(devices.begin(), devices.end(), [](const BluetoothDeviceInfo& a, const BluetoothDeviceInfo& b) {
+        if (a.connected != b.connected) {
+            return a.connected > b.connected;
+        }
+        return a.name < b.name;
+    });
+}
+
+void App::RefreshDeviceNames() {
+    ApplyDeviceAliases(devices_);
+    UpdateTaskbarDisplayCache();
+    UpdateTray();
+    SyncBatteryWindow();
+    if (settingsWindow_ && IsWindow(settingsWindow_)) {
+        InvalidateRect(settingsWindow_, nullptr, TRUE);
+    }
+    if (devicePanelWindow_ && IsWindow(devicePanelWindow_)) {
+        InvalidateRect(devicePanelWindow_, nullptr, TRUE);
+    }
+}
+
 void App::ApplyScanResult(std::vector<BluetoothDeviceInfo>* result) {
     if (result) {
+        // 必须在 TrackConnectionChanges 之前套别名，否则连接提示会念旧名字。
+        ApplyDeviceAliases(*result);
         TrackConnectionChanges(*result);
         devices_ = std::move(*result);
         delete result;
@@ -1119,7 +1180,7 @@ void App::PaintSettingsWindow(HWND hwnd) {
             DrawTextLine(hdc, L"暂无蓝牙设备", { left, top + 222, right, top + 252 },
                 DT_SINGLELINE | DT_LEFT | DT_VCENTER, smallFont, kSubtleText);
         } else {
-            const int count = std::min(5, static_cast<int>(devices_.size()));
+            const int count = std::min(kScanDeviceListMax, static_cast<int>(devices_.size()));
             for (int i = 0; i < count; ++i) {
                 const auto& device = devices_[static_cast<size_t>(i)];
                 DrawScanDeviceRow(hdc, device, ScanDeviceRowRect(left, right, top, i), cfg.lowBatteryThreshold, textFont, smallFont);
@@ -1948,6 +2009,177 @@ void App::HandleUpdateClick(HWND hwnd, int x, int y) {
     }
 }
 
+void App::ShowRenameDialog(const std::wstring& deviceId, const std::wstring& systemName, const std::wstring& currentName) {
+    if (deviceId.empty()) {
+        return;
+    }
+    CloseRenameDialog();
+
+    renameDeviceId_ = deviceId;
+    renameSystemName_ = systemName;
+
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = App::RenameWindowProc;
+    wc.hInstance = instance_;
+    wc.lpszClassName = kRenameClass;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+    RegisterClassW(&wc);
+
+    constexpr int width = 400;
+    constexpr int height = 210;
+    RECT work{};
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    HMONITOR monitor = MonitorFromWindow(settingsWindow_ ? settingsWindow_ : hwnd_, MONITOR_DEFAULTTONEAREST);
+    if (monitor && GetMonitorInfoW(monitor, &monitorInfo)) {
+        work = monitorInfo.rcWork;
+    } else {
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    }
+    const int x = static_cast<int>(work.left) + (static_cast<int>(work.right - work.left) - width) / 2;
+    const int y = static_cast<int>(work.top) + (static_cast<int>(work.bottom - work.top) - height) / 2;
+
+    renameWindow_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT, kRenameClass, L"重命名设备",
+        WS_POPUP, x, y, width, height, settingsWindow_ ? settingsWindow_ : hwnd_, nullptr, instance_, this);
+    if (!renameWindow_) {
+        renameDeviceId_.clear();
+        renameSystemName_.clear();
+        return;
+    }
+
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, 10, 10);
+    SetWindowRgn(renameWindow_, region, TRUE);
+
+    if (!renameControlFont_) {
+        renameControlFont_ = CreateUiFont(10);
+    }
+    renameEdit_ = CreateWindowExW(0, L"EDIT", currentName.c_str(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
+        28, 96, width - 56, 28, renameWindow_,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RENAME_EDIT)), instance_, nullptr);
+    if (renameEdit_) {
+        SendMessageW(renameEdit_, WM_SETFONT, reinterpret_cast<WPARAM>(renameControlFont_), TRUE);
+        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6, 6));
+        SendMessageW(renameEdit_, EM_SETLIMITTEXT, kMaxAliasLength, 0);
+        // 项目全自绘、消息循环没有 IsDialogMessage，回车/ESC 只能自己接。
+        // 注意别碰 EDIT 的 GWLP_USERDATA，那是它自己的内部数据。
+        g_renameEditBaseProc = reinterpret_cast<WNDPROC>(
+            SetWindowLongPtrW(renameEdit_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&App::RenameEditProc)));
+    }
+
+    ShowWindow(renameWindow_, SW_SHOW);
+    UpdateWindow(renameWindow_);
+    SetForegroundWindow(renameWindow_);
+    if (renameEdit_) {
+        SetFocus(renameEdit_);
+        SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
+    }
+}
+
+void App::PaintRenameWindow(HWND hwnd) {
+    PAINTSTRUCT ps{};
+    HDC hdc = BeginPaint(hwnd, &ps);
+    RECT rect{};
+    GetClientRect(hwnd, &rect);
+    FillRoundRect(hdc, rect, 10, kSurface);
+    StrokeRoundRect(hdc, { rect.left, rect.top, rect.right - 1, rect.bottom - 1 }, 10, RGB(203, 213, 225));
+
+    HFONT titleFont = CreateUiFont(12, FW_SEMIBOLD);
+    HFONT smallFont = CreateUiFont(9);
+
+    DrawTextLine(hdc, L"重命名设备", { 28, 22, rect.right - 28, 50 },
+        DT_SINGLELINE | DT_LEFT | DT_VCENTER, titleFont, kText);
+    DrawTextLine(hdc, std::wstring(L"原名：") + renameSystemName_, { 28, 54, rect.right - 28, 78 },
+        DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, smallFont, kSubtleText);
+    DrawTextLine(hdc, L"留空即恢复系统名称", { 28, 128, rect.right - 28, 150 },
+        DT_SINGLELINE | DT_LEFT | DT_VCENTER, smallFont, kSubtleText);
+
+    DrawButtonFrame(hdc, { 28, rect.bottom - 52, 116, rect.bottom - 20 }, L"恢复默认", smallFont, false);
+    DrawButtonFrame(hdc, { rect.right - 194, rect.bottom - 52, rect.right - 110, rect.bottom - 20 }, L"取消", smallFont, false);
+    DrawButtonFrame(hdc, { rect.right - 98, rect.bottom - 52, rect.right - 28, rect.bottom - 20 }, L"确定", smallFont, true);
+
+    DeleteObject(titleFont);
+    DeleteObject(smallFont);
+    EndPaint(hwnd, &ps);
+}
+
+void App::HandleRenameClick(HWND hwnd, int x, int y) {
+    RECT rect{};
+    GetClientRect(hwnd, &rect);
+    if (PointInRect(x, y, { 28, rect.bottom - 52, 116, rect.bottom - 20 })) {
+        ResetRenameToSystemName();
+        return;
+    }
+    if (PointInRect(x, y, { rect.right - 194, rect.bottom - 52, rect.right - 110, rect.bottom - 20 })) {
+        CloseRenameDialog();
+        return;
+    }
+    if (PointInRect(x, y, { rect.right - 98, rect.bottom - 52, rect.right - 28, rect.bottom - 20 })) {
+        CommitRename();
+        return;
+    }
+}
+
+void App::CommitRename() {
+    if (renameDeviceId_.empty()) {
+        CloseRenameDialog();
+        return;
+    }
+
+    std::wstring alias;
+    if (renameEdit_ && IsWindow(renameEdit_)) {
+        wchar_t buffer[kMaxAliasLength + 1]{};
+        GetWindowTextW(renameEdit_, buffer, kMaxAliasLength + 1);
+        alias = buffer;
+    }
+
+    const size_t first = alias.find_first_not_of(L" \t");
+    if (first == std::wstring::npos) {
+        alias.clear();
+    } else {
+        alias = alias.substr(first, alias.find_last_not_of(L" \t") - first + 1);
+    }
+
+    auto& cfg = configStore_.Edit();
+    const std::wstring deviceId = renameDeviceId_;
+    if (alias.empty() || alias == renameSystemName_) {
+        cfg.deviceAliases.erase(deviceId);
+        Logger::Instance().Info(L"清除设备别名: " + renameSystemName_);
+    } else {
+        auto existing = cfg.deviceAliases.find(deviceId);
+        if (existing == cfg.deviceAliases.end()
+            && cfg.deviceAliases.size() >= kMaxDeviceAliases) {
+            Logger::Instance().Warn(L"别名数量已达上限，忽略重命名: " + renameSystemName_);
+            CloseRenameDialog();
+            return;
+        }
+        cfg.deviceAliases[deviceId] = alias;
+        Logger::Instance().Info(L"设备重命名: " + renameSystemName_ + L" -> " + alias);
+    }
+    configStore_.Save();
+
+    CloseRenameDialog();
+    RefreshDeviceNames();
+}
+
+void App::ResetRenameToSystemName() {
+    if (renameEdit_ && IsWindow(renameEdit_)) {
+        SetWindowTextW(renameEdit_, L"");
+        SetFocus(renameEdit_);
+    }
+}
+
+void App::CloseRenameDialog() {
+    if (renameWindow_ && IsWindow(renameWindow_)) {
+        DestroyWindow(renameWindow_);
+    }
+    renameWindow_ = nullptr;
+    renameEdit_ = nullptr;
+    renameDeviceId_.clear();
+    renameSystemName_.clear();
+}
+
 void App::CheckForUpdatesAsync() {
     updateService_.CheckAsync(hwnd_);
 }
@@ -1967,6 +2199,7 @@ void App::Shutdown() {
     tray_.Remove();
     CloseTrayPanels();
     CloseConnectionToastWindow();
+    CloseRenameDialog();
     if (statusWindow_) {
         DestroyWindow(statusWindow_);
         statusWindow_ = nullptr;
@@ -2143,6 +2376,18 @@ LRESULT CALLBACK App::SettingsWindowProc(HWND hwnd, UINT message, WPARAM wParam,
                 }
                 app->RefreshAsync();
                 InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
+            const int rowCount = std::min(kScanDeviceListMax, static_cast<int>(app->devices_.size()));
+            for (int i = 0; i < rowCount; ++i) {
+                const RECT row = ScanDeviceRowRect(left, right, top, i);
+                if (!PointInRect(x, y, ScanDeviceRenameButtonRect(row))) {
+                    continue;
+                }
+                const auto& device = app->devices_[static_cast<size_t>(i)];
+                // 已有别名时预填别名，否则留空（提示里说明留空即恢复系统名）。
+                const std::wstring current = device.name == device.systemName ? std::wstring() : device.name;
+                app->ShowRenameDialog(device.id, device.systemName, current);
                 return 0;
             }
         }
@@ -2492,6 +2737,94 @@ LRESULT CALLBACK App::ConnectionToastWindowProc(HWND hwnd, UINT message, WPARAM 
     case WM_DESTROY:
         if (app->connectionToastWindow_ == hwnd) {
             app->connectionToastWindow_ = nullptr;
+        }
+        return 0;
+    default:
+        break;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+// EDIT 的子类过程：只截回车 / ESC，其余交回原过程。
+LRESULT CALLBACK App::RenameEditProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    WNDPROC baseProc = g_renameEditBaseProc;
+
+    if (message == WM_KEYDOWN && (wParam == VK_RETURN || wParam == VK_ESCAPE)) {
+        // 转成消息投给父窗口：不能在 EDIT 自己的消息里连带销毁它。
+        PostMessageW(GetParent(hwnd), wParam == VK_RETURN ? WM_RENAME_COMMIT : WM_RENAME_CANCEL, 0, 0);
+        return 0;
+    }
+    // 吞掉对应的 WM_CHAR，否则 EDIT 会响一声。
+    if (message == WM_CHAR && (wParam == VK_RETURN || wParam == VK_ESCAPE)) {
+        return 0;
+    }
+
+    // 必须在 EDIT 自己的 WM_NCDESTROY 里摘掉子类，且要先把消息交回原过程，
+    // 让 EDIT 释放内部状态；否则它下一次被访问就是野指针。
+    if (message == WM_NCDESTROY) {
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(baseProc));
+        g_renameEditBaseProc = nullptr;
+        return baseProc ? CallWindowProcW(baseProc, hwnd, message, wParam, lParam)
+                        : DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
+    return baseProc ? CallWindowProcW(baseProc, hwnd, message, wParam, lParam)
+                    : DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+LRESULT CALLBACK App::RenameWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    App* app = nullptr;
+    if (message == WM_NCCREATE) {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        app = reinterpret_cast<App*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+    app = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    if (!app) {
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
+    switch (message) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        app->PaintRenameWindow(hwnd);
+        return 0;
+    case WM_LBUTTONUP:
+        app->HandleRenameClick(hwnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        return 0;
+    case WM_CTLCOLOREDIT:
+        SetBkColor(reinterpret_cast<HDC>(wParam), kSurface);
+        SetTextColor(reinterpret_cast<HDC>(wParam), kText);
+        return reinterpret_cast<LRESULT>(GetStockObject(WHITE_BRUSH));
+    case WM_RENAME_COMMIT:
+        app->CommitRename();
+        return 0;
+    case WM_RENAME_CANCEL:
+        app->CloseRenameDialog();
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_NCDESTROY:
+        // 子窗口此时已全部销毁，字体不再被任何 DC 选中，可以安全删除。
+        if (app->renameControlFont_) {
+            DeleteObject(app->renameControlFont_);
+            app->renameControlFont_ = nullptr;
+        }
+        if (app->renameWindow_ == hwnd) {
+            app->renameWindow_ = nullptr;
+            app->renameEdit_ = nullptr;
+            app->renameDeviceId_.clear();
+            app->renameSystemName_.clear();
+        }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    case WM_DESTROY:
+        // 弹窗关掉后把焦点还给设置页。EDIT 的子类和字体留给 WM_NCDESTROY 收尾。
+        if (app->settingsWindow_ && IsWindow(app->settingsWindow_)) {
+            SetForegroundWindow(app->settingsWindow_);
         }
         return 0;
     default:

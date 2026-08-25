@@ -2,6 +2,7 @@
 
 #include "bluetooth/ble_battery.h"
 #include "bluetooth/btc_battery.h"
+#include "bluetooth/hidpp_battery.h"
 #include "bluetooth/winrt_bluetooth_status.h"
 #include "logger.h"
 
@@ -10,6 +11,7 @@
 #include <devguid.h>
 #include <algorithm>
 #include <cwctype>
+#include <iterator>
 #include <memory>
 #include <sstream>
 
@@ -83,10 +85,8 @@ std::wstring ConnectionKindText(BluetoothConnectionKind kind) {
         return L"Unknown";
     }
 }
-}
 
-std::vector<BluetoothDeviceInfo> BluetoothScanner::Scan(const AppConfig& config) {
-    (void)config;
+std::vector<BluetoothDeviceInfo> EnumerateBluetoothDevices() {
     Logger::Instance().Info(L"蓝牙扫描开始");
     std::vector<BluetoothDeviceInfo> devices;
 
@@ -163,6 +163,23 @@ std::vector<BluetoothDeviceInfo> BluetoothScanner::Scan(const AppConfig& config)
         devices.push_back(device);
     }
 
+    Logger::Instance().Info(L"蓝牙扫描结束，设备数量: " + std::to_wstring(devices.size()));
+    return devices;
+}
+}
+
+std::vector<BluetoothDeviceInfo> BluetoothScanner::Scan(const AppConfig& config) {
+    (void)config;
+
+    std::vector<BluetoothDeviceInfo> devices = EnumerateBluetoothDevices();
+
+    // 2.4G 设备走 USB dongle + HID 栈，不在蓝牙设备类里，需要单独扫描。
+    auto hidppDevices = ScanLogitechHidppDevices();
+    Logger::Instance().Info(L"2.4G 扫描结束，设备数量: " + std::to_wstring(hidppDevices.size()));
+    devices.insert(devices.end(),
+                   std::make_move_iterator(hidppDevices.begin()),
+                   std::make_move_iterator(hidppDevices.end()));
+
     std::sort(devices.begin(), devices.end(), [](const auto& a, const auto& b) {
         if (a.connected != b.connected) {
             return a.connected > b.connected;
@@ -170,6 +187,5 @@ std::vector<BluetoothDeviceInfo> BluetoothScanner::Scan(const AppConfig& config)
         return a.name < b.name;
     });
 
-    Logger::Instance().Info(L"蓝牙扫描结束，设备数量: " + std::to_wstring(devices.size()));
     return devices;
 }
