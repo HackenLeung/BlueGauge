@@ -745,6 +745,13 @@ bool App::IsOtherApplicationFullscreen() const {
         return false;
     }
 
+    // 带标准标题栏的最大化窗口不会遮挡任务栏，不算全屏。
+    // 真正的全屏窗口（游戏、浏览器 F11、播放器）都会先去掉 WS_CAPTION。
+    const LONG style = GetWindowLongW(foreground, GWL_STYLE);
+    if (IsZoomed(foreground) && (style & WS_CAPTION) == WS_CAPTION) {
+        return false;
+    }
+
     RECT windowRect{};
     if (!GetWindowRect(foreground, &windowRect)) {
         return false;
@@ -753,6 +760,17 @@ bool App::IsOtherApplicationFullscreen() const {
     HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
     if (!monitor) {
         return false;
+    }
+
+    // 电量条挂在主任务栏上，只有同一个显示器上的全屏窗口才会遮住它。
+    // 多屏时副屏一般没有任务栏（rcWork == rcMonitor），副屏上的最大化窗口
+    // 会正好铺满整个显示器，若不限定显示器就会被误判成全屏。
+    HWND taskbar = (taskbarWindow_ && IsWindow(taskbarWindow_)) ? taskbarWindow_ : FindTaskbarWindow();
+    if (taskbar) {
+        HMONITOR taskbarMonitor = MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST);
+        if (taskbarMonitor && taskbarMonitor != monitor) {
+            return false;
+        }
     }
 
     MONITORINFO monitorInfo{};
