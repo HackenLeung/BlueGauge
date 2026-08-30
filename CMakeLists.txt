@@ -28,6 +28,7 @@ add_executable(BlueGauge WIN32
     src/bluetooth/btc_battery.cpp
     src/bluetooth/ble_battery.cpp
     src/bluetooth/hidpp_battery.cpp
+    src/bluetooth/xctech_battery.cpp
     res/app.rc
 )
 

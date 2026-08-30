@@ -4,6 +4,7 @@
 #include "bluetooth/btc_battery.h"
 #include "bluetooth/hidpp_battery.h"
 #include "bluetooth/winrt_bluetooth_status.h"
+#include "bluetooth/xctech_battery.h"
 #include "logger.h"
 
 #include <Windows.h>
@@ -174,11 +175,18 @@ std::vector<BluetoothDeviceInfo> BluetoothScanner::Scan(const AppConfig& config)
     std::vector<BluetoothDeviceInfo> devices = EnumerateBluetoothDevices();
 
     // 2.4G 设备走 USB dongle + HID 栈，不在蓝牙设备类里，需要单独扫描。
+    // 每家的私有协议互不相通，各走一条独立的读取路径。
     auto hidppDevices = ScanLogitechHidppDevices();
     Logger::Instance().Info(L"2.4G 扫描结束，设备数量: " + std::to_wstring(hidppDevices.size()));
     devices.insert(devices.end(),
                    std::make_move_iterator(hidppDevices.begin()),
                    std::make_move_iterator(hidppDevices.end()));
+
+    auto xctechDevices = ScanXctechDevices();
+    Logger::Instance().Info(L"英菲克扫描结束，设备数量: " + std::to_wstring(xctechDevices.size()));
+    devices.insert(devices.end(),
+                   std::make_move_iterator(xctechDevices.begin()),
+                   std::make_move_iterator(xctechDevices.end()));
 
     std::sort(devices.begin(), devices.end(), [](const auto& a, const auto& b) {
         if (a.connected != b.connected) {
