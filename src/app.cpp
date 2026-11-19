@@ -368,6 +368,9 @@ DeviceBadgeStyle DeviceBadge(const BluetoothDeviceInfo& device, int threshold) {
     if (!device.batteryPercent.has_value()) {
         return { L"电量未知", RGB(100, 116, 139), RGB(255, 255, 255), RGB(255, 255, 255), false };
     }
+    if (device.charging) {
+        return { L"充电中", RGB(37, 99, 235), RGB(239, 246, 255), RGB(191, 219, 254) };
+    }
     if (*device.batteryPercent <= threshold) {
         return { L"低电量", RGB(220, 38, 38), RGB(254, 242, 242), RGB(254, 202, 202) };
     }
@@ -379,6 +382,9 @@ std::wstring DeviceStatusText(const BluetoothDeviceInfo& device) {
     status += L" · ";
     if (device.connected && device.batteryPercent.has_value()) {
         status += std::to_wstring(*device.batteryPercent) + L"%";
+        if (device.charging) {
+            status += L" · 充电中";
+        }
     } else {
         status += L"电量未知";
     }
@@ -472,6 +478,8 @@ void DrawMeter(HDC hdc, const RECT& rect, int battery, COLORREF color) {
 struct TaskbarDeviceRenderInfo {
     std::wstring name;
     int battery = 0;
+    // 充电中时在百分比左侧画一个绿点，宽度预算里不用额外留位置。
+    bool charging = false;
 };
 
 int TaskbarItemMinWidth(int style) {
@@ -547,6 +555,13 @@ TaskbarRowLayout BuildTaskbarRowLayout(HDC hdc, HFONT font, const std::vector<Ta
     return layout;
 }
 
+void DrawChargingDot(HDC hdc, const RECT& percentRect) {
+    // 4px 圆点放在「名字」和「百分比」之间那 8px 的空隙里，不影响既有布局。
+    const int centerY = (percentRect.top + percentRect.bottom) / 2;
+    const int left = percentRect.left - 7;
+    FillRoundRect(hdc, { left, centerY - 2, left + 4, centerY + 2 }, 4, RGB(34, 197, 94));
+}
+
 void DrawTaskbarDeviceItem(HDC hdc, const TaskbarDeviceRenderInfo& device, int style, const RECT& rect, int threshold, HFONT font, bool previewMode) {
     (void)previewMode;
     style = std::clamp(style, 0, kTaskbarBatteryStyleCount - 1);
@@ -563,6 +578,9 @@ void DrawTaskbarDeviceItem(HDC hdc, const TaskbarDeviceRenderInfo& device, int s
             DrawTextLine(hdc, device.name, nameRect,
                 DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, font, kTaskbarStripText);
         }
+        if (device.charging) {
+            DrawChargingDot(hdc, percentRect);
+        }
         DrawTextLine(hdc, percent, percentRect, DT_SINGLELINE | DT_RIGHT | DT_VCENTER, font, color);
         return;
     }
@@ -576,6 +594,9 @@ void DrawTaskbarDeviceItem(HDC hdc, const TaskbarDeviceRenderInfo& device, int s
     if (nameRect.right > nameRect.left + 8) {
         DrawTextLine(hdc, device.name, nameRect,
             DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, font, kTaskbarStripText);
+    }
+    if (device.charging) {
+        DrawChargingDot(hdc, percentRect);
     }
     DrawTextLine(hdc, percent, percentRect, DT_SINGLELINE | DT_RIGHT | DT_VCENTER, font, color);
 }
@@ -1016,7 +1037,8 @@ void App::PositionStatusWindow() {
     for (int i = 0; i < count; ++i) {
         renderDevices.push_back({
             visibleDevices[static_cast<size_t>(i)].name,
-            std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100)
+            std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100),
+            visibleDevices[static_cast<size_t>(i)].charging
         });
     }
     HDC measureDc = GetDC(nullptr);
@@ -1113,7 +1135,8 @@ void App::PaintStatusWindow(HWND hwnd) {
     for (int i = 0; i < count; ++i) {
         renderDevices.push_back({
             visibleDevices[static_cast<size_t>(i)].name,
-            std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100)
+            std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100),
+            visibleDevices[static_cast<size_t>(i)].charging
         });
     }
     DrawTaskbarDeviceList(hdc, renderDevices, style, rect, threshold, textFont, false);
@@ -1531,8 +1554,14 @@ void App::PaintDevicePanel(HWND hwnd) {
             const COLORREF stateColor = device.connected ? kText : kSubtleText;
             DrawTextLine(hdc, device.name, { 16, y + 1, rect.right - 76, y + 16 },
                 DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, textFont, stateColor);
-            DrawTextLine(hdc, device.connected ? L"已连接" : L"未连接", { 16, y + 15, rect.right - 76, y + 30 },
-                DT_SINGLELINE | DT_LEFT | DT_VCENTER, smallFont, device.connected ? RGB(22, 163, 74) : kSubtleText);
+            std::wstring connectionText = device.connected ? L"已连接" : L"未连接";
+            COLORREF connectionColor = device.connected ? RGB(22, 163, 74) : kSubtleText;
+            if (device.connected && device.charging) {
+                connectionText = L"充电中";
+                connectionColor = RGB(37, 99, 235);
+            }
+            DrawTextLine(hdc, connectionText, { 16, y + 15, rect.right - 76, y + 30 },
+                DT_SINGLELINE | DT_LEFT | DT_VCENTER, smallFont, connectionColor);
             std::wstring batteryText = device.batteryPercent.has_value() ? std::to_wstring(*device.batteryPercent) + L"%" : L"未知";
             const COLORREF batteryColor = device.batteryPercent.has_value() ? BatteryColor(*device.batteryPercent, threshold) : kSubtleText;
             DrawTextLine(hdc, batteryText, { rect.right - 70, y, rect.right - 16, y + 30 },

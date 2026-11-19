@@ -17,5 +17,7 @@ struct BluetoothDeviceInfo {
     std::wstring systemName;
     bool connected = false;
     std::optional<int> batteryPercent;
+    // 是否正在充电。只有能读到该标志的协议才会置位，读不到的保持 false。
+    bool charging = false;
     std::wstring source;
 };

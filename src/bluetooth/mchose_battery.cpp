@@ -516,6 +516,7 @@ std::vector<BluetoothDeviceInfo> ScanMchoseDevices() {
 
         device.connected = true;
         device.batteryPercent = reading.level;
+        device.charging = reading.charging;
         Logger::Instance().Info(name + L" 2.4G 电量读取成功: "
             + std::to_wstring(reading.level) + L"%"
             + (reading.charging ? L"（充电中）" : L""));

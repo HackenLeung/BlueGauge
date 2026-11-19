@@ -462,6 +462,7 @@ std::vector<BluetoothDeviceInfo> ScanXctechDevices() {
         const int level = payload[kOffsetBattery];
         if (payload[kOffsetValid] != 0 && level >= 1 && level <= 100) {
             device.batteryPercent = level;
+            device.charging = charging;
             Logger::Instance().Info(device.name + L" " + receiver.source + L" 电量读取成功: "
                 + std::to_wstring(level) + L"%"
                 + (charging ? L"（充电中）" : L"")
