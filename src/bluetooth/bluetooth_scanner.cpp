@@ -3,6 +3,7 @@
 #include "bluetooth/ble_battery.h"
 #include "bluetooth/btc_battery.h"
 #include "bluetooth/hidpp_battery.h"
+#include "bluetooth/mchose_battery.h"
 #include "bluetooth/winrt_bluetooth_status.h"
 #include "bluetooth/xctech_battery.h"
 #include "logger.h"
@@ -187,6 +188,12 @@ std::vector<BluetoothDeviceInfo> BluetoothScanner::Scan(const AppConfig& config)
     devices.insert(devices.end(),
                    std::make_move_iterator(xctechDevices.begin()),
                    std::make_move_iterator(xctechDevices.end()));
+
+    auto mchoseDevices = ScanMchoseDevices();
+    Logger::Instance().Info(L"迈从扫描结束，设备数量: " + std::to_wstring(mchoseDevices.size()));
+    devices.insert(devices.end(),
+                   std::make_move_iterator(mchoseDevices.begin()),
+                   std::make_move_iterator(mchoseDevices.end()));
 
     std::sort(devices.begin(), devices.end(), [](const auto& a, const auto& b) {
         if (a.connected != b.connected) {
