@@ -270,9 +270,11 @@ Reading QueryKeyboard(HANDLE device) {
         }
 
         reading.answered = true;
-        const int level = reply[kKeyboardBatteryOffset];
-        if (level >= 1 && level <= 100) {
-            reading.level = level;
+        const int raw = reply[kKeyboardBatteryOffset];
+        if (raw >= 1 && raw <= 100) {
+            // 固件给的是细分值，官方驱动按 5% 步进显示：实测固件报 47 时驱动显示 50。
+            // 这里向上取整到 5 的倍数，和厂商界面保持一致，避免"47% vs 50%"的偏差。
+            reading.level = std::min(100, ((raw + 4) / 5) * 5);
         }
         // 状态字节低 4 位是满电标志，高 4 位才是充电中；只有高 4 位可信。
         reading.charging = (reply[kKeyboardStatusOffset] >> 4) != 0;
