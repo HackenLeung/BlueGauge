@@ -46,8 +46,11 @@ private:
     void RefreshDeviceNames();
     void UpdateTray();
     void UpdateStatusWindow();
-    void PositionStatusWindow();
-    bool IsOtherApplicationFullscreen() const;
+    bool PositionStatusWindow();
+    // 任务栏也是置顶窗口，点它会把自己抬到我们前面，把电量条盖住。
+    bool IsStatusWindowBehindTaskbar() const;
+    // detail 非空时写入被判为全屏的那扇窗的标题 / 类名 / 矩形，便于排查误判。
+    bool IsOtherApplicationFullscreen(std::wstring* detail = nullptr) const;
     void PaintStatusWindow(HWND hwnd);
     HWND FindTaskbarWindow() const;
     HWND FindTrayNotifyWindow(HWND taskbar) const;
@@ -116,6 +119,14 @@ private:
     std::wstring updatePrimaryText_;
     std::wstring updatePrimaryUrl_;
     bool positioningStatusWindow_ = false;
+    // 上一次落位（屏幕坐标）与内容签名：两者都没变就不重绘，避免分层窗口闪动。
+    RECT lastStatusRect_{};
+    bool hasLastStatusGeometry_ = false;
+    std::wstring lastStatusSignature_;
+    // 因为前台全屏而暂时藏起来（不是销毁），全屏结束后立刻恢复。
+    bool fullscreenHidden_ = false;
+    // 被全屏连续盖住的次数，凑够几次才真隐藏，用来躲开瞬时的透明浮现层。
+    int fullscreenBusyPolls_ = 0;
     bool scanInProgress_ = false;
     DWORD lastScanTick_ = 0;
     int lastScanDeviceCount_ = 0;

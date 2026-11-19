@@ -37,8 +37,9 @@ constexpr UINT_PTR kBluetoothChangeDebounceTimer = 3004;
 constexpr UINT_PTR kTaskbarVisibilityTimer = 3005;
 constexpr UINT kConnectionToastDurationMs = 2800;
 constexpr UINT kBluetoothChangeDebounceMs = 1500;
-constexpr UINT kTaskbarVisibilityPollMs = 500;
-constexpr int kFullscreenRectTolerance = 2;
+// 电量条是任务栏的子窗口，绘制层级由父子关系保证，轮询只负责跟随任务栏
+// 的显示 / 隐藏与几何变化。
+constexpr UINT kTaskbarVisibilityPollMs = 300;
 
 bool TryReadInt(HWND hwnd, int id, int& value) {
     wchar_t text[32]{};
@@ -145,6 +146,38 @@ bool IsShellDesktopWindow(HWND hwnd) {
         || lstrcmpW(className, L"Shell_TrayWnd") == 0;
 }
 
+// shell 自己的界面不是「全屏应用」。Windows 11 的开始菜单 / 通知中心 / 搜索
+// 宿主 XamlExplorerHostIslandWindow 会铺满整个屏幕但完全透明，只看矩形的话
+// 会把电量条误判成被全屏盖住，于是藏起来又恢复——肉眼就是闪一下。
+bool IsShellUiWindow(HWND hwnd, DWORD processId) {
+    wchar_t className[64]{};
+    if (GetClassNameW(hwnd, className, 64) > 0
+        && (lstrcmpW(className, L"XamlExplorerHostIslandWindow") == 0
+            || lstrcmpW(className, L"TopLevelWindowForOverflowXamlIsland") == 0
+            || lstrcmpW(className, L"NotifyIconOverflowWindow") == 0)) {
+        return true;
+    }
+
+    if (processId == 0) {
+        return false;
+    }
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process) {
+        return false;
+    }
+    wchar_t path[MAX_PATH]{};
+    DWORD size = MAX_PATH;
+    bool shell = false;
+    if (QueryFullProcessImageNameW(process, 0, path, &size)) {
+        const std::wstring exe = path;
+        const size_t slash = exe.find_last_of(L'\\');
+        const std::wstring name = slash == std::wstring::npos ? exe : exe.substr(slash + 1);
+        shell = lstrcmpiW(name.c_str(), L"explorer.exe") == 0;
+    }
+    CloseHandle(process);
+    return shell;
+}
+
 HFONT CreateUiFont(int pointSize, int weight = FW_NORMAL) {
     HDC hdc = GetDC(nullptr);
     const int height = -MulDiv(pointSize, GetDeviceCaps(hdc, LOGPIXELSY), 72);
@@ -242,6 +275,34 @@ bool ContainsDeviceId(const std::vector<std::wstring>& ids, const std::wstring& 
     return std::find(ids.begin(), ids.end(), id) != ids.end();
 }
 
+// 2.4G 接收器的设备 ID 里带着接收器实例哈希（RCV_xxxxxxxx），而这段哈希跟
+// USB 端口绑定：换个口插，哈希就变了，原本置顶的设备会突然消失。
+// 匹配时忽略哈希那一段，只比「型号段」和「通道后缀（KB/MS）」。
+bool SamePinnedDevice(const std::wstring& deviceId, const std::wstring& pinnedId) {
+    if (deviceId == pinnedId) {
+        return true;
+    }
+    static const std::wstring kMarker = L"&RCV_";
+    const size_t deviceMarker = deviceId.find(kMarker);
+    const size_t pinnedMarker = pinnedId.find(kMarker);
+    if (deviceMarker == std::wstring::npos || pinnedMarker == std::wstring::npos) {
+        return false;
+    }
+    const size_t deviceHashEnd = deviceId.find(L'&', deviceMarker + kMarker.size());
+    const size_t pinnedHashEnd = pinnedId.find(L'&', pinnedMarker + kMarker.size());
+    if (deviceHashEnd == std::wstring::npos || pinnedHashEnd == std::wstring::npos) {
+        return false;
+    }
+    return deviceId.compare(0, deviceMarker, pinnedId, 0, pinnedMarker) == 0
+        && deviceId.compare(deviceHashEnd, std::wstring::npos,
+                            pinnedId, pinnedHashEnd, std::wstring::npos) == 0;
+}
+
+bool IsDevicePinned(const std::vector<std::wstring>& ids, const std::wstring& id) {
+    return std::any_of(ids.begin(), ids.end(),
+        [&id](const std::wstring& pinned) { return SamePinnedDevice(id, pinned); });
+}
+
 std::vector<BluetoothDeviceInfo> MenuDevices(const std::vector<BluetoothDeviceInfo>& devices, bool showDisconnected) {
     std::vector<BluetoothDeviceInfo> result;
     for (const auto& device : devices) {
@@ -259,7 +320,7 @@ std::vector<BluetoothDeviceInfo> TaskbarDevices(const std::vector<BluetoothDevic
 
     for (const auto& pinnedId : config.pinnedDeviceIds) {
         auto it = std::find_if(connected.begin(), connected.end(), [&](const BluetoothDeviceInfo& device) {
-            return device.id == pinnedId;
+            return SamePinnedDevice(device.id, pinnedId);
         });
         if (it != connected.end() && result.size() < static_cast<size_t>(limit)) {
             result.push_back(*it);
@@ -721,6 +782,9 @@ bool App::CreateBatteryWindow() {
         }
     }
 
+    // 保持顶层弹出窗口（分层 + 颜色键），但把 owner 设成任务栏：
+    // 「被拥有的窗口在 z 序上永远高于它的 owner」，这样点击任务栏时它再怎么
+    // 抬起自己，也压不到电量条上面，不需要事后抢回来，自然就不会闪。
     statusWindow_ = CreateWindowExW(
         WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
         kStatusClass,
@@ -741,11 +805,14 @@ bool App::CreateBatteryWindow() {
     }
     SetLayeredWindowAttributes(statusWindow_, kStatusTransparentColor, 0, LWA_COLORKEY);
 
+    // owner = 任务栏：拥有窗口恒定位于 owner 之上，点击任务栏不会再把它盖住。
+    SetWindowLongPtrW(statusWindow_, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(taskbarWindow_));
+
     UpdateStatusWindow();
     return true;
 }
 
-bool App::IsOtherApplicationFullscreen() const {
+bool App::IsOtherApplicationFullscreen(std::wstring* detail) const {
     HWND foreground = GetForegroundWindow();
     if (!foreground) {
         return false;
@@ -766,6 +833,10 @@ bool App::IsOtherApplicationFullscreen() const {
         return false;
     }
 
+    if (IsShellUiWindow(foreground, foregroundProcessId)) {
+        return false;
+    }
+
     // 带标准标题栏的最大化窗口不会遮挡任务栏，不算全屏。
     // 真正的全屏窗口（游戏、浏览器 F11、播放器）都会先去掉 WS_CAPTION。
     const LONG style = GetWindowLongW(foreground, GWL_STYLE);
@@ -778,51 +849,115 @@ bool App::IsOtherApplicationFullscreen() const {
         return false;
     }
 
-    HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
-    if (!monitor) {
-        return false;
-    }
-
-    // 电量条挂在主任务栏上，只有同一个显示器上的全屏窗口才会遮住它。
-    // 多屏时副屏一般没有任务栏（rcWork == rcMonitor），副屏上的最大化窗口
-    // 会正好铺满整个显示器，若不限定显示器就会被误判成全屏。
-    HWND taskbar = (taskbarWindow_ && IsWindow(taskbarWindow_)) ? taskbarWindow_ : FindTaskbarWindow();
-    if (taskbar) {
-        HMONITOR taskbarMonitor = MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST);
-        if (taskbarMonitor && taskbarMonitor != monitor) {
+    // 判据是「这扇窗是不是真的压住了电量条」，而不是「它是不是铺满了显示器」。
+    // 国产客户端（抖音 PC 版就是）大量使用无边框窗口，它们铺满的是工作区、
+    // 并不会盖住任务栏，按显示器矩形判断会把它们误判成全屏、把电量条藏掉。
+    RECT overlay{};
+    if (statusWindow_ && IsWindowVisible(statusWindow_)) {
+        if (!GetWindowRect(statusWindow_, &overlay)) {
             return false;
         }
-    }
-
-    MONITORINFO monitorInfo{};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    if (!GetMonitorInfoW(monitor, &monitorInfo)) {
+    } else if (hasLastStatusGeometry_) {
+        overlay = lastStatusRect_;  // 已经藏起来了，用上次落位继续判断
+    } else {
         return false;
     }
 
-    return windowRect.left <= monitorInfo.rcMonitor.left + kFullscreenRectTolerance
-        && windowRect.top <= monitorInfo.rcMonitor.top + kFullscreenRectTolerance
-        && windowRect.right >= monitorInfo.rcMonitor.right - kFullscreenRectTolerance
-        && windowRect.bottom >= monitorInfo.rcMonitor.bottom - kFullscreenRectTolerance;
+    const bool covers = windowRect.left <= overlay.left
+        && windowRect.top <= overlay.top
+        && windowRect.right >= overlay.right
+        && windowRect.bottom >= overlay.bottom;
+
+    if (covers && detail) {
+        wchar_t className[128]{};
+        GetClassNameW(foreground, className, 128);
+        wchar_t title[160]{};
+        GetWindowTextW(foreground, title, 160);
+        *detail = L"\"" + std::wstring(title) + L"\" [" + className + L"] 窗口("
+            + std::to_wstring(windowRect.left) + L"," + std::to_wstring(windowRect.top) + L","
+            + std::to_wstring(windowRect.right) + L"," + std::to_wstring(windowRect.bottom)
+            + L") 覆盖电量条("
+            + std::to_wstring(overlay.left) + L"," + std::to_wstring(overlay.top) + L","
+            + std::to_wstring(overlay.right) + L"," + std::to_wstring(overlay.bottom) + L")";
+    }
+    return covers;
+}
+
+bool App::IsStatusWindowBehindTaskbar() const {
+    if (!statusWindow_ || !IsWindowVisible(statusWindow_)) {
+        return false;
+    }
+    HWND taskbar = (taskbarWindow_ && IsWindow(taskbarWindow_)) ? taskbarWindow_ : FindTaskbarWindow();
+    if (!taskbar) {
+        return false;
+    }
+    // 沿 z 序往上看：任务栏排在我们前面就说明被压住了。
+    for (HWND above = GetWindow(statusWindow_, GW_HWNDPREV); above; above = GetWindow(above, GW_HWNDPREV)) {
+        if (above == taskbar) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void App::SyncBatteryWindow() {
     const auto visibleDevices = TaskbarDisplayDevices();
-    const bool blockedByFullscreen = !visibleDevices.empty() && IsOtherApplicationFullscreen();
-    if (visibleDevices.empty() || blockedByFullscreen) {
-        if (statusWindow_) {
-            if (blockedByFullscreen) {
-                Logger::Instance().Info(L"任务栏电量显示隐藏：其他应用全屏");
+    const bool wantShow = !visibleDevices.empty();
+
+    std::wstring fullscreenDetail;
+    const bool blockedByFullscreen = wantShow && IsOtherApplicationFullscreen(&fullscreenDetail);
+
+    if (!blockedByFullscreen) {
+        fullscreenBusyPolls_ = 0;
+    }
+
+    if (!wantShow || blockedByFullscreen) {
+        if (blockedByFullscreen) {
+            if (!fullscreenHidden_) {
+                // 连续 3 次（约 1.5 秒）都被盖住才藏。shell 的某些透明浮现层
+                // 会瞬间铺满屏幕，一盖就藏会让电量条跟着闪一下。
+                if (++fullscreenBusyPolls_ < 3) {
+                    return;
+                }
+                fullscreenHidden_ = true;
+                fullscreenBusyPolls_ = 0;
+                Logger::Instance().Info(L"任务栏电量显示隐藏：前台全屏 " + fullscreenDetail);
             }
+            if (statusWindow_ && IsWindowVisible(statusWindow_)) {
+                ShowWindow(statusWindow_, SW_HIDE);
+            }
+        } else if (statusWindow_) {
             DestroyWindow(statusWindow_);
             statusWindow_ = nullptr;
         }
         return;
     }
+
+    if (fullscreenHidden_) {
+        fullscreenHidden_ = false;
+        Logger::Instance().Info(L"任务栏电量显示恢复：前台全屏结束");
+    }
+
     if (!statusWindow_ || !IsWindow(statusWindow_)) {
         CreateBatteryWindow();
         return;
     }
+    if (!IsWindowVisible(statusWindow_)) {
+        // 从隐藏恢复：位置和内容都要重新算一遍。
+        hasLastStatusGeometry_ = false;
+        lastStatusSignature_.clear();
+        ShowWindow(statusWindow_, SW_SHOWNOACTIVATE);
+    }
+
+    // owner 是任务栏，正常情况下任务栏抬不起来压我们。万一还有别的置顶窗口挤进来，
+    // 这里兜底抬一次（只在真被压住时发生，不做周期性重申，所以不会闪）。
+    if (IsStatusWindowBehindTaskbar()) {
+        positioningStatusWindow_ = true;
+        SetWindowPos(statusWindow_, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        positioningStatusWindow_ = false;
+    }
+
     UpdateStatusWindow();
 }
 
@@ -923,6 +1058,12 @@ void App::ApplyDeviceAliases(std::vector<BluetoothDeviceInfo>& devices) const {
             device.name = device.systemName;
         }
         auto it = aliases.find(device.id);
+        if (it == aliases.end()) {
+            // 接收器换 USB 口后 ID 里的 RCV 哈希会变，按型号段回退匹配一次，
+            // 否则重命名会莫名其妙回到系统名。
+            it = std::find_if(aliases.begin(), aliases.end(),
+                [&device](const auto& entry) { return SamePinnedDevice(device.id, entry.first); });
+        }
         if (it != aliases.end() && !it->second.empty()) {
             device.name = it->second;
         }
@@ -999,36 +1140,57 @@ void App::UpdateStatusWindow() {
         return;
     }
 
-    PositionStatusWindow();
-    InvalidateRect(statusWindow_, nullptr, TRUE);
+    const bool moved = PositionStatusWindow();
+
+    // 每 10 秒一次的扫描会在内容没变时也走这里。以前无条件 Invalidate 会让
+    // 窗口重新画一遍，配合颜色键就表现为周期性闪动，所以先比对内容签名。
+    std::wstring signature;
+    signature += std::to_wstring(std::clamp(configStore_.Get().taskbarBatteryStyle, 0, kTaskbarBatteryStyleCount - 1));
+    signature += L"|";
+    signature += std::to_wstring(configStore_.Get().taskbarMaxDevices);
+    signature += L"|";
+    for (const auto& device : TaskbarDisplayDevices()) {
+        signature += device.name;
+        signature += L":";
+        signature += std::to_wstring(device.batteryPercent.value_or(-1));
+        signature += device.charging ? L"+" : L"-";
+        signature += L";";
+    }
+
+    if (!moved && signature == lastStatusSignature_) {
+        return;
+    }
+    lastStatusSignature_ = std::move(signature);
+    // FALSE：不擦背景，避免重绘前先露一次底色。
+    InvalidateRect(statusWindow_, nullptr, FALSE);
 }
 
-void App::PositionStatusWindow() {
+bool App::PositionStatusWindow() {
     if (!statusWindow_) {
-        return;
+        return false;
     }
     if (!taskbarWindow_ || !IsWindow(taskbarWindow_)) {
         taskbarWindow_ = FindTaskbarWindow();
     }
     if (!taskbarWindow_) {
-        return;
+        return false;
     }
     const auto visibleDevices = TaskbarDisplayDevices();
     const int style = std::clamp(configStore_.Get().taskbarBatteryStyle, 0, kTaskbarBatteryStyleCount - 1);
     const int count = std::min(configStore_.Get().taskbarMaxDevices, static_cast<int>(visibleDevices.size()));
     if (count <= 0) {
-        return;
+        return false;
     }
 
     RECT taskbarRect{};
     if (!GetWindowRect(taskbarWindow_, &taskbarRect)) {
         Logger::Instance().Warn(L"PositionStatusWindow failed: taskbar rect unavailable");
-        return;
+        return false;
     }
     const int taskbarWidth = taskbarRect.right - taskbarRect.left;
     const int taskbarHeight = taskbarRect.bottom - taskbarRect.top;
     if (taskbarWidth <= 0 || taskbarHeight <= 0) {
-        return;
+        return false;
     }
     const bool horizontal = taskbarWidth >= taskbarHeight;
     const int availableWidth = std::max(1, taskbarWidth - 8);
@@ -1081,12 +1243,30 @@ void App::PositionStatusWindow() {
     x = maxX >= minX ? std::clamp(x, minX, maxX) : taskbarRect.left;
     y = maxY >= minY ? std::clamp(y, minY, maxY) : taskbarRect.top;
 
+    // 位置和尺寸都没变就直接返回：WM_WINDOWPOSCHANGED 在切换窗口时会频繁触发，
+    // 每次都 SetWindowPos + SetWindowRgn 会让这个分层窗口整帧重画，表现为闪动。
+    // WS_EX_TOPMOST 是窗口样式，本来就能压住非置顶窗口，不需要反复重申。
+    // 位置和尺寸都没变就直接返回。WM_WINDOWPOSCHANGED 在切换 / 最小化窗口时
+    // 会频繁触发，这里再调 SetWindowPos 或 SetWindowRgn 都会让这个分层窗口
+    // 重新合成一次，肉眼就是闪。WS_EX_TOPMOST 是窗口样式，正常窗口盖不住它，
+    // 不需要靠反复重申来维持层级。
+    const RECT desired{ x, y, x + width, y + height };
+    if (hasLastStatusGeometry_ && IsWindowVisible(statusWindow_)
+        && EqualRect(&desired, &lastStatusRect_)) {
+        return false;
+    }
+
     positioningStatusWindow_ = true;
     SetWindowPos(statusWindow_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     positioningStatusWindow_ = false;
 
+    // bRedraw 传 FALSE：尺寸变化本身就会触发重绘，这里再强制一次只会多闪一帧。
     HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, 8, 8);
-    SetWindowRgn(statusWindow_, region, TRUE);
+    SetWindowRgn(statusWindow_, region, FALSE);
+
+    lastStatusRect_ = desired;
+    hasLastStatusGeometry_ = true;
+    return true;
 }
 
 HWND App::FindTaskbarWindow() const {
@@ -1114,8 +1294,15 @@ void App::PaintStatusWindow(HWND hwnd) {
     RECT rect{};
     GetClientRect(hwnd, &rect);
 
+    // 这个窗口是 WS_EX_LAYERED + 颜色键透明。直接往屏上逐段画的话，每画一段
+    // 都会先露出一次颜色键，肉眼看到的就是闪一下。整帧先画进内存 DC，
+    // 最后一次 BitBlt 提交，中间过程不可见。
+    HDC memDc = CreateCompatibleDC(hdc);
+    HBITMAP backBuffer = CreateCompatibleBitmap(hdc, rect.right, rect.bottom);
+    HGDIOBJ oldBitmap = SelectObject(memDc, backBuffer);
+
     HBRUSH transparentBrush = CreateSolidBrush(kStatusTransparentColor);
-    FillRect(hdc, &rect, transparentBrush);
+    FillRect(memDc, &rect, transparentBrush);
     DeleteObject(transparentBrush);
 
     HFONT textFont = CreateUiFont(9);
@@ -1123,25 +1310,25 @@ void App::PaintStatusWindow(HWND hwnd) {
     const int style = std::clamp(configStore_.Get().taskbarBatteryStyle, 0, kTaskbarBatteryStyleCount - 1);
     const int threshold = configStore_.Get().lowBatteryThreshold;
 
-    if (visibleDevices.empty()) {
-        DeleteObject(textFont);
-        EndPaint(hwnd, &ps);
-        return;
+    if (!visibleDevices.empty()) {
+        const int count = std::min(configStore_.Get().taskbarMaxDevices, static_cast<int>(visibleDevices.size()));
+        std::vector<TaskbarDeviceRenderInfo> renderDevices;
+        renderDevices.reserve(static_cast<size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            renderDevices.push_back({
+                visibleDevices[static_cast<size_t>(i)].name,
+                std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100),
+                visibleDevices[static_cast<size_t>(i)].charging
+            });
+        }
+        DrawTaskbarDeviceList(memDc, renderDevices, style, rect, threshold, textFont, false);
     }
-
-    const int count = std::min(configStore_.Get().taskbarMaxDevices, static_cast<int>(visibleDevices.size()));
-    std::vector<TaskbarDeviceRenderInfo> renderDevices;
-    renderDevices.reserve(static_cast<size_t>(count));
-    for (int i = 0; i < count; ++i) {
-        renderDevices.push_back({
-            visibleDevices[static_cast<size_t>(i)].name,
-            std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100),
-            visibleDevices[static_cast<size_t>(i)].charging
-        });
-    }
-    DrawTaskbarDeviceList(hdc, renderDevices, style, rect, threshold, textFont, false);
 
     DeleteObject(textFont);
+    BitBlt(hdc, 0, 0, rect.right, rect.bottom, memDc, 0, 0, SRCCOPY);
+    SelectObject(memDc, oldBitmap);
+    DeleteObject(backBuffer);
+    DeleteDC(memDc);
     EndPaint(hwnd, &ps);
 }
 
@@ -1297,7 +1484,7 @@ void App::PaintSettingsWindow(HWND hwnd) {
                 const auto& device = devices_[static_cast<size_t>(i)];
                 const int y = top + kDisplayPinnedRowsTop + i * 34;
                 RECT row{ left, y, right, y + 30 };
-                const bool pinned = ContainsDeviceId(cfg.pinnedDeviceIds, device.id);
+                const bool pinned = IsDevicePinned(cfg.pinnedDeviceIds, device.id);
                 FillRoundRect(hdc, row, 5, RGB(248, 250, 252));
                 StrokeRoundRect(hdc, { row.left, row.top, row.right - 1, row.bottom - 1 }, 5, RGB(226, 232, 240));
                 DrawCheckBox(hdc, { row.left + 8, row.top + 5, row.left + 28, row.top + 25 }, pinned);
@@ -2384,7 +2571,8 @@ LRESULT CALLBACK App::SettingsWindowProc(HWND hwnd, UINT message, WPARAM wParam,
                 RECT row{ left, top + kDisplayPinnedRowsTop + i * 34, right, top + kDisplayPinnedRowsTop + i * 34 + 30 };
                 if (PointInRect(x, y, row)) {
                     const std::wstring id = app->devices_[static_cast<size_t>(i)].id;
-                    auto it = std::find(cfg.pinnedDeviceIds.begin(), cfg.pinnedDeviceIds.end(), id);
+                    auto it = std::find_if(cfg.pinnedDeviceIds.begin(), cfg.pinnedDeviceIds.end(),
+                        [&id](const std::wstring& pinned) { return SamePinnedDevice(id, pinned); });
                     if (it != cfg.pinnedDeviceIds.end()) {
                         cfg.pinnedDeviceIds.erase(it);
                     } else if (cfg.pinnedDeviceIds.size() < kMaxPinnedDevices) {
@@ -2562,6 +2750,8 @@ LRESULT CALLBACK App::StatusWindowProc(HWND hwnd, UINT message, WPARAM wParam, L
     case WM_DESTROY:
         if (app && app->statusWindow_ == hwnd) {
             app->statusWindow_ = nullptr;
+            app->hasLastStatusGeometry_ = false;
+            app->lastStatusSignature_.clear();
         }
         return 0;
     case WM_NCHITTEST:
