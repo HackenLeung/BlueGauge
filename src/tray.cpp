@@ -26,8 +26,9 @@ std::wstring DeviceLine(const BluetoothDeviceInfo& device) {
     }
     if (!device.connected) {
         ss << L"（未连接）";
-    }
-    if (device.connected && device.charging) {
+    } else if (device.sleeping) {
+        ss << L"（休眠，上次读数）";
+    } else if (device.charging) {
         ss << L"（充电中）";
     }
     return ss.str();

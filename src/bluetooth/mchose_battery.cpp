@@ -12,11 +12,38 @@
 #include <cstdint>
 #include <cstdio>
 #include <cwctype>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace {
+// 上一次读到的电量。设备休眠后不再应答，但接收器还在，这时沿用这份缓存把设备
+// 继续列出来并标记「休眠」，免得它从列表里凭空消失、任务栏条子整条不见。
+struct CachedReading {
+    int level = 0;
+    bool charging = false;
+};
+
+std::mutex g_cacheMutex;
+std::map<std::wstring, CachedReading> g_lastReadings;
+
+bool LookupCachedReading(const std::wstring& id, CachedReading& out) {
+    std::lock_guard<std::mutex> lock(g_cacheMutex);
+    const auto it = g_lastReadings.find(id);
+    if (it == g_lastReadings.end()) {
+        return false;
+    }
+    out = it->second;
+    return true;
+}
+
+void StoreCachedReading(const std::wstring& id, int level, bool charging) {
+    std::lock_guard<std::mutex> lock(g_cacheMutex);
+    g_lastReadings[id] = CachedReading{ level, charging };
+}
+
 // MCHOSE（迈从）前后两代接收器用的是两套完全不同的私有协议，都只能只读查询。
 //
 // 键盘（41E4:2001，G87 等）：20 字节报文集，输出 report 0x13。
@@ -497,9 +524,26 @@ std::vector<BluetoothDeviceInfo> ScanMchoseDevices() {
 
         const std::wstring name = DeviceName(channel);
         if (!reading.answered) {
-            // 接收器在但设备关机 / 休眠 / 未配对时不会应答，按不在线处理。
-            Logger::Instance().Info(L"迈从扫描: VID_" + Hex4(channel.vendorId)
-                + L"&PID_" + Hex4(channel.productId) + L" 无应答，设备可能未开机");
+            // 接收器还在，但设备休眠了。有上次读数就沿用，并标成「休眠」，
+            // 不要让它从列表里消失（否则任务栏那条会整块不见）。
+            CachedReading cached;
+            if (LookupCachedReading(id, cached)) {
+                BluetoothDeviceInfo sleeping;
+                sleeping.id = id;
+                sleeping.name = name;
+                sleeping.systemName = name;
+                sleeping.source = L"2.4G";
+                sleeping.connected = true;
+                sleeping.sleeping = true;
+                sleeping.batteryPercent = cached.level;
+                sleeping.charging = cached.charging;
+                devices.push_back(std::move(sleeping));
+                Logger::Instance().Info(name + L" 无应答，按休眠处理，沿用上次读数 "
+                    + std::to_wstring(cached.level) + L"%");
+            } else {
+                Logger::Instance().Info(L"迈从扫描: VID_" + Hex4(channel.vendorId)
+                    + L"&PID_" + Hex4(channel.productId) + L" 无应答，设备可能未开机");
+            }
             continue;
         }
 
@@ -519,6 +563,7 @@ std::vector<BluetoothDeviceInfo> ScanMchoseDevices() {
         device.connected = true;
         device.batteryPercent = reading.level;
         device.charging = reading.charging;
+        StoreCachedReading(id, reading.level, reading.charging);
         Logger::Instance().Info(name + L" 2.4G 电量读取成功: "
             + std::to_wstring(reading.level) + L"%"
             + (reading.charging ? L"（充电中）" : L""));

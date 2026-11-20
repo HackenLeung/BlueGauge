@@ -127,6 +127,8 @@ private:
     bool fullscreenHidden_ = false;
     // 被全屏连续盖住的次数，凑够几次才真隐藏，用来躲开瞬时的透明浮现层。
     int fullscreenBusyPolls_ = 0;
+    // 用户空闲时暂停轮询（避免把 2.4G 设备反复唤醒、破坏其自动休眠）。
+    bool idlePollPaused_ = false;
     bool scanInProgress_ = false;
     DWORD lastScanTick_ = 0;
     int lastScanDeviceCount_ = 0;

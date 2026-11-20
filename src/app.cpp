@@ -136,6 +136,20 @@ bool IsTaskbarCentered() {
     return status != ERROR_SUCCESS || value != 0;
 }
 
+// 用户空闲多久就停止轮询设备。2.4G 键鼠是靠「一段时间没有活动」自行休眠的，
+// 而每轮扫描都要向接收器发一次查询报文，接收器为了应答会把设备唤醒，
+// 等于隔十几秒戳醒一次，官方软件里设置的 1 分钟休眠永远等不到。
+constexpr DWORD kIdlePollCutoffMs = 6000;
+
+bool IsSystemIdleBeyond(DWORD thresholdMs) {
+    LASTINPUTINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetLastInputInfo(&info)) {
+        return false;
+    }
+    return (GetTickCount() - info.dwTime) >= thresholdMs;
+}
+
 bool IsShellDesktopWindow(HWND hwnd) {
     wchar_t className[64]{};
     if (GetClassNameW(hwnd, className, 64) <= 0) {
@@ -426,6 +440,9 @@ DeviceBadgeStyle DeviceBadge(const BluetoothDeviceInfo& device, int threshold) {
     if (!device.connected) {
         return { L"未连接", RGB(100, 116, 139), RGB(248, 250, 252), RGB(226, 232, 240) };
     }
+    if (device.sleeping) {
+        return { L"休眠", RGB(100, 116, 139), RGB(248, 250, 252), RGB(226, 232, 240) };
+    }
     if (!device.batteryPercent.has_value()) {
         return { L"电量未知", RGB(100, 116, 139), RGB(255, 255, 255), RGB(255, 255, 255), false };
     }
@@ -443,7 +460,9 @@ std::wstring DeviceStatusText(const BluetoothDeviceInfo& device) {
     status += L" · ";
     if (device.connected && device.batteryPercent.has_value()) {
         status += std::to_wstring(*device.batteryPercent) + L"%";
-        if (device.charging) {
+        if (device.sleeping) {
+            status += L" · 休眠中（上次读数）";
+        } else if (device.charging) {
             status += L" · 充电中";
         }
     } else {
@@ -1743,7 +1762,10 @@ void App::PaintDevicePanel(HWND hwnd) {
                 DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, textFont, stateColor);
             std::wstring connectionText = device.connected ? L"已连接" : L"未连接";
             COLORREF connectionColor = device.connected ? RGB(22, 163, 74) : kSubtleText;
-            if (device.connected && device.charging) {
+            if (device.connected && device.sleeping) {
+                connectionText = L"休眠";
+                connectionColor = kSubtleText;
+            } else if (device.connected && device.charging) {
                 connectionText = L"充电中";
                 connectionColor = RGB(37, 99, 235);
             }
@@ -3088,7 +3110,19 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_TIMER:
         if (wParam == kRefreshTimer) {
-            RefreshAsync();
+            // 用户空闲时不再轮询：查询报文会唤醒接收器后面的设备，破坏它们的自动休眠。
+            if (IsSystemIdleBeyond(kIdlePollCutoffMs)) {
+                if (!idlePollPaused_) {
+                    idlePollPaused_ = true;
+                    Logger::Instance().Info(L"用户空闲，暂停设备轮询（让 2.4G 设备正常休眠）");
+                }
+            } else {
+                if (idlePollPaused_) {
+                    idlePollPaused_ = false;
+                    Logger::Instance().Info(L"用户恢复操作，继续设备轮询");
+                }
+                RefreshAsync();
+            }
         } else if (wParam == kBluetoothChangeDebounceTimer) {
             RefreshFromBluetoothChange();
         } else if (wParam == kTaskbarVisibilityTimer) {

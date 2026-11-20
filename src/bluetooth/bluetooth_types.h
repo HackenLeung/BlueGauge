@@ -19,5 +19,7 @@ struct BluetoothDeviceInfo {
     std::optional<int> batteryPercent;
     // 是否正在充电。只有能读到该标志的协议才会置位，读不到的保持 false。
     bool charging = false;
+    // 接收器还在但设备休眠了，电量是上一次读到的缓存值。
+    bool sleeping = false;
     std::wstring source;
 };
