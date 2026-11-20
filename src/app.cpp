@@ -101,7 +101,10 @@ constexpr int kSegmentedWidth = 152;
 constexpr int kSegmentedHeight = 36;
 constexpr int kSegmentedPadding = 3;
 constexpr int kSegmentedOptionCount = 3;
-constexpr int kRefreshOptions[kSegmentedOptionCount] = { 10, 20, 30 };
+// 刷新间隔要留一个「长档」：2.4G 设备的自动休眠计时会被每次查询重置，
+// 10 秒一查等于让它们永远达不到官方设定的休眠时间。选 300 秒时设备
+// 只在每次查询后醒一小会儿，其余时间都能睡着。
+constexpr int kRefreshOptions[kSegmentedOptionCount] = { 10, 60, 300 };
 constexpr int kThresholdOptions[kSegmentedOptionCount] = { 10, 20, 30 };
 constexpr int kScanDeviceListTop = 218;
 constexpr int kScanDeviceRowHeight = 44;
@@ -1586,6 +1589,12 @@ void App::ShowTrayPanel() {
     if (trayPanelWindow_ && IsWindow(trayPanelWindow_)) {
         CloseTrayPanels();
         return;
+    }
+
+    // 打开面板本身就说明用户在场，顺手读一次，这样即使把刷新间隔调到很长，
+    // 看到的也是刚读到的值。
+    if (!scanInProgress_) {
+        RefreshAsync();
     }
 
     WNDCLASSW wc{};
