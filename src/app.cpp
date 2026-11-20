@@ -140,6 +140,8 @@ bool IsTaskbarCentered() {
 // 而每轮扫描都要向接收器发一次查询报文，接收器为了应答会把设备唤醒，
 // 等于隔十几秒戳醒一次，官方软件里设置的 1 分钟休眠永远等不到。
 constexpr DWORD kIdlePollCutoffMs = 6000;
+// 停止轮询满这么久就认为设备已经自行休眠，界面按「休眠」展示。
+constexpr DWORD kSleepInferenceMs = 65000;
 
 bool IsSystemIdleBeyond(DWORD thresholdMs) {
     LASTINPUTINFO info{};
@@ -560,6 +562,8 @@ struct TaskbarDeviceRenderInfo {
     int battery = 0;
     // 充电中时在百分比左侧画一个绿点，宽度预算里不用额外留位置。
     bool charging = false;
+    // 设备休眠：电量为上次读数，用灰色表示。
+    bool sleeping = false;
 };
 
 int TaskbarItemMinWidth(int style) {
@@ -645,7 +649,8 @@ void DrawChargingDot(HDC hdc, const RECT& percentRect) {
 void DrawTaskbarDeviceItem(HDC hdc, const TaskbarDeviceRenderInfo& device, int style, const RECT& rect, int threshold, HFONT font, bool previewMode) {
     (void)previewMode;
     style = std::clamp(style, 0, kTaskbarBatteryStyleCount - 1);
-    const COLORREF color = BatteryColor(device.battery, threshold);
+    // 休眠设备的电量是上次读数，用灰色表示，避免和实时值混淆。
+    const COLORREF color = device.sleeping ? RGB(148, 163, 184) : BatteryColor(device.battery, threshold);
     const std::wstring percent = std::to_wstring(device.battery) + L"%";
     const int percentWidth = PercentTextWidth(hdc, font, percent);
 
@@ -919,6 +924,29 @@ bool App::IsStatusWindowBehindTaskbar() const {
     return false;
 }
 
+void App::MarkIdleDevicesAsSleeping() {
+    devicesMarkedSleeping_ = true;
+    bool changed = false;
+    for (auto& device : devices_) {
+        if (device.connected && !device.sleeping && device.source == L"2.4G") {
+            device.sleeping = true;
+            changed = true;
+        }
+    }
+    if (!changed) {
+        return;
+    }
+    Logger::Instance().Info(L"停止轮询已超过 1 分钟，2.4G 设备按休眠展示（沿用上次读数）");
+    SyncBatteryWindow();
+    UpdateTray();
+    if (settingsWindow_ && IsWindow(settingsWindow_)) {
+        InvalidateRect(settingsWindow_, nullptr, TRUE);
+    }
+    if (devicePanelWindow_ && IsWindow(devicePanelWindow_)) {
+        InvalidateRect(devicePanelWindow_, nullptr, TRUE);
+    }
+}
+
 void App::SyncBatteryWindow() {
     const auto visibleDevices = TaskbarDisplayDevices();
     const bool wantShow = !visibleDevices.empty();
@@ -1173,6 +1201,7 @@ void App::UpdateStatusWindow() {
         signature += L":";
         signature += std::to_wstring(device.batteryPercent.value_or(-1));
         signature += device.charging ? L"+" : L"-";
+        signature += device.sleeping ? L"z" : L"o";
         signature += L";";
     }
 
@@ -1219,7 +1248,8 @@ bool App::PositionStatusWindow() {
         renderDevices.push_back({
             visibleDevices[static_cast<size_t>(i)].name,
             std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100),
-            visibleDevices[static_cast<size_t>(i)].charging
+            visibleDevices[static_cast<size_t>(i)].charging,
+            visibleDevices[static_cast<size_t>(i)].sleeping
         });
     }
     HDC measureDc = GetDC(nullptr);
@@ -3114,11 +3144,20 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             if (IsSystemIdleBeyond(kIdlePollCutoffMs)) {
                 if (!idlePollPaused_) {
                     idlePollPaused_ = true;
+                    idlePauseSinceTick_ = GetTickCount();
+                    devicesMarkedSleeping_ = false;
                     Logger::Instance().Info(L"用户空闲，暂停设备轮询（让 2.4G 设备正常休眠）");
+                } else if (!devicesMarkedSleeping_
+                    && GetTickCount() - idlePauseSinceTick_ >= kSleepInferenceMs) {
+                    // 停止轮询已经超过设备自身的休眠时间，按「已休眠」展示。
+                    // 不能靠查询去确认——那一查就把设备弄醒了，正是要避免的事。
+                    MarkIdleDevicesAsSleeping();
                 }
             } else {
                 if (idlePollPaused_) {
                     idlePollPaused_ = false;
+                    idlePauseSinceTick_ = 0;
+                    devicesMarkedSleeping_ = false;
                     Logger::Instance().Info(L"用户恢复操作，继续设备轮询");
                 }
                 RefreshAsync();

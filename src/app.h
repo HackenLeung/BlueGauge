@@ -47,6 +47,8 @@ private:
     void UpdateTray();
     void UpdateStatusWindow();
     bool PositionStatusWindow();
+    // 停止轮询够久后，把 2.4G 设备按「已休眠」展示（不查询确认，避免把它们弄醒）。
+    void MarkIdleDevicesAsSleeping();
     // 任务栏也是置顶窗口，点它会把自己抬到我们前面，把电量条盖住。
     bool IsStatusWindowBehindTaskbar() const;
     // detail 非空时写入被判为全屏的那扇窗的标题 / 类名 / 矩形，便于排查误判。
@@ -129,6 +131,8 @@ private:
     int fullscreenBusyPolls_ = 0;
     // 用户空闲时暂停轮询（避免把 2.4G 设备反复唤醒、破坏其自动休眠）。
     bool idlePollPaused_ = false;
+    DWORD idlePauseSinceTick_ = 0;
+    bool devicesMarkedSleeping_ = false;
     bool scanInProgress_ = false;
     DWORD lastScanTick_ = 0;
     int lastScanDeviceCount_ = 0;
