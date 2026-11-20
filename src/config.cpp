@@ -34,7 +34,7 @@ void ConfigStore::Load() {
         return;
     }
 
-    config_.refreshIntervalSeconds = ClampInt(GetPrivateProfileIntW(L"General", L"RefreshIntervalSeconds", 10, path_.c_str()), 5, 3600);
+    config_.refreshIntervalSeconds = ClampInt(GetPrivateProfileIntW(L"General", L"RefreshIntervalSeconds", 30, path_.c_str()), 5, 3600);
     config_.lowBatteryThreshold = ClampInt(GetPrivateProfileIntW(L"General", L"LowBatteryThreshold", 20, path_.c_str()), 1, 100);
     config_.showDisconnectedDevices = GetPrivateProfileIntW(L"General", L"ShowDisconnectedDevices", 0, path_.c_str()) != 0;
     config_.enableLowBatteryNotify = GetPrivateProfileIntW(L"General", L"EnableLowBatteryNotify", 1, path_.c_str()) != 0;

@@ -102,9 +102,9 @@ constexpr int kSegmentedHeight = 36;
 constexpr int kSegmentedPadding = 3;
 constexpr int kSegmentedOptionCount = 3;
 // 刷新间隔要留一个「长档」：2.4G 设备的自动休眠计时会被每次查询重置，
-// 10 秒一查等于让它们永远达不到官方设定的休眠时间。选 300 秒时设备
-// 只在每次查询后醒一小会儿，其余时间都能睡着。
-constexpr int kRefreshOptions[kSegmentedOptionCount] = { 10, 60, 300 };
+// 10 秒一查等于让它们永远达不到官方设定的休眠时间。选 30 分钟时设备只在
+// 每次查询后醒一小会儿，其余时间都能睡着；想临时看准确值打开托盘面板即可。
+constexpr int kRefreshOptions[kSegmentedOptionCount] = { 30, 300, 1800 };
 constexpr int kThresholdOptions[kSegmentedOptionCount] = { 10, 20, 30 };
 constexpr int kScanDeviceListTop = 218;
 constexpr int kScanDeviceRowHeight = 44;
