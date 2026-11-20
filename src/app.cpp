@@ -565,8 +565,6 @@ struct TaskbarDeviceRenderInfo {
     int battery = 0;
     // 充电中时在百分比左侧画一个绿点，宽度预算里不用额外留位置。
     bool charging = false;
-    // 设备休眠：电量为上次读数，用灰色表示。
-    bool sleeping = false;
 };
 
 int TaskbarItemMinWidth(int style) {
@@ -652,8 +650,7 @@ void DrawChargingDot(HDC hdc, const RECT& percentRect) {
 void DrawTaskbarDeviceItem(HDC hdc, const TaskbarDeviceRenderInfo& device, int style, const RECT& rect, int threshold, HFONT font, bool previewMode) {
     (void)previewMode;
     style = std::clamp(style, 0, kTaskbarBatteryStyleCount - 1);
-    // 休眠设备的电量是上次读数，用灰色表示，避免和实时值混淆。
-    const COLORREF color = device.sleeping ? RGB(148, 163, 184) : BatteryColor(device.battery, threshold);
+    const COLORREF color = BatteryColor(device.battery, threshold);
     const std::wstring percent = std::to_wstring(device.battery) + L"%";
     const int percentWidth = PercentTextWidth(hdc, font, percent);
 
@@ -1204,7 +1201,6 @@ void App::UpdateStatusWindow() {
         signature += L":";
         signature += std::to_wstring(device.batteryPercent.value_or(-1));
         signature += device.charging ? L"+" : L"-";
-        signature += device.sleeping ? L"z" : L"o";
         signature += L";";
     }
 
@@ -1251,8 +1247,7 @@ bool App::PositionStatusWindow() {
         renderDevices.push_back({
             visibleDevices[static_cast<size_t>(i)].name,
             std::clamp(visibleDevices[static_cast<size_t>(i)].batteryPercent.value_or(0), 0, 100),
-            visibleDevices[static_cast<size_t>(i)].charging,
-            visibleDevices[static_cast<size_t>(i)].sleeping
+            visibleDevices[static_cast<size_t>(i)].charging
         });
     }
     HDC measureDc = GetDC(nullptr);
